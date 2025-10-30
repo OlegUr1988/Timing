@@ -1,0 +1,130 @@
+{
+    "USDCAD": {
+        "good_cycles": [
+            31,
+            34,
+            37,
+            44,
+            48,
+            55,
+            60,
+            63,
+            68,
+            71,
+            73,
+            76,
+            81,
+            84,
+            89
+        ],
+        "discovery_fractal_level": 3,
+        "min_forecast_count_chart": 3,
+        "filter_unique_lengths_applied": false,
+        "filter_no_fib_ratio_applied": true
+    },
+    "USDJPY": {
+        "good_cycles": [
+            34,
+            35,
+            37,
+            41,
+            44,
+            48,
+            56,
+            60,
+            68,
+            71,
+            76,
+            81,
+            82
+        ],
+        "discovery_fractal_level": 3,
+        "min_forecast_count_chart": 3,
+        "filter_unique_lengths_applied": false,
+        "filter_no_fib_ratio_applied": false
+    },
+    "EURUSD": {
+        "good_cycles": [
+            34,
+            45,
+            50,
+            55,
+            61,
+            65,
+            75,
+            79,
+            81,
+            84,
+            86,
+            89
+        ],
+        "discovery_fractal_level": 3,
+        "min_forecast_count_chart": 3,
+        "filter_unique_lengths_applied": false,
+        "filter_no_fib_ratio_applied": false
+    },
+    "GBPUSD": {
+        "good_cycles": [
+            37,
+            39,
+            45,
+            48,
+            55,
+            60,
+            62,
+            68,
+            69,
+            73,
+            82,
+            90
+        ],
+        "discovery_fractal_level": 4,
+        "min_forecast_count_chart": 3,
+        "filter_unique_lengths_applied": false,
+        "filter_no_fib_ratio_applied": true
+    },
+    "AUDUSD": {
+        "good_cycles": [
+            33,
+            34,
+            37,
+            41,
+            47,
+            52,
+            55,
+            61,
+            68,
+            75,
+            82,
+            89
+        ],
+        "discovery_fractal_level": 4,
+        "min_forecast_count_chart": 3,
+        "filter_unique_lengths_applied": false,
+        "filter_no_fib_ratio_applied": false
+    },
+    "USDCHF": {
+        "good_cycles": [
+            33,
+            34,
+            35,
+            37,
+            39,
+            44,
+            48,
+            52,
+            55,
+            62,
+            65,
+            69,
+            75,
+            79,
+            84,
+            88
+        ],
+        "discovery_fractal_level": 3,
+        "min_forecast_count_chart": 3,
+        "filter_unique_lengths_applied": false,
+        "filter_no_fib_ratio_applied": true
+    }
+}
