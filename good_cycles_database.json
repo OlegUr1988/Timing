@@ -46,22 +46,27 @@
     "EURUSD": {
         "good_cycles": [
             34,
-            45,
+            35,
+            40,
+            43,
+            46,
             50,
             55,
+            58,
             61,
+            64,
             65,
-            75,
-            79,
-            81,
-            84,
-            86,
+            71,
+            76,
+            78,
+            83,
             89
         ],
         "discovery_fractal_level": 3,
         "min_forecast_count_chart": 3,
         "filter_unique_lengths_applied": false,
-        "filter_no_fib_ratio_applied": false
+        "filter_no_fib_ratio_applied": false,
+        "grid_match_tolerance": 0.45
     },
     "GBPUSD": {
         "good_cycles": [

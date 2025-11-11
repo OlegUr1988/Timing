@@ -49,6 +49,46 @@ def find_fractals(df, n=3):
                  all(df_copy['Low'].iloc[i] < df_copy['Low'].iloc[i+j] for j in range(1, n + 1))
         if is_high: df_copy.loc[i, 'Fractal'] = 'High'
         elif is_low: df_copy.loc[i, 'Fractal'] = 'Low'
+    return df_copy 
+
+def find_fractals(df, n=3):
+    """Identifies fractal highs and lows using NumPy arrays for robustness (CORRECTED LOGIC)."""
+    df_copy = df.copy().reset_index(drop=True) # Ensure clean 0-based index
+    df_copy['Fractal'] = None
+    print(f"Finding fractals with n={n}...")
+    
+    high_values = df_copy['High'].values
+    low_values = df_copy['Low'].values
+    num_rows = len(df_copy)
+    fractal_results = np.full(num_rows, None, dtype=object)
+
+    for i in range(n, num_rows - n):
+        current_high = high_values[i]
+        current_low = low_values[i]
+
+        # --- 1. Check for High Fractal ---
+        is_high = True
+        for j in range(1, n + 1):
+            # Check both sides
+            if current_high <= high_values[i-j] or current_high <= high_values[i+j]:
+                is_high = False
+                break
+        
+        # --- 2. Check for Low Fractal ---
+        is_low = True
+        for j in range(1, n + 1):
+            # Check both sides
+            if current_low >= low_values[i-j] or current_low >= low_values[i+j]:
+                is_low = False
+                break
+        
+        # --- 3. Assign based on if/elif logic ---
+        if is_high:
+            fractal_results[i] = 'High'
+        elif is_low:
+            fractal_results[i] = 'Low'
+            
+    df_copy['Fractal'] = fractal_results
     return df_copy
 
 def analyze_fibonacci_cycles(df, discovery_fractal_indices):
@@ -75,7 +115,7 @@ def analyze_fibonacci_cycles(df, discovery_fractal_indices):
                     result_row.update(matches)
                     validated_grids.append(result_row)
             if base_cycle_length > 100: break
-    return pd.DataFrame(validated_grids)
+    return pd.DataFrame(validated_grids) 
 
 def discover_and_plot_good_cycles(results_df):
     print("\nPart 1: Identifying and plotting best-performing cycle lengths...")
@@ -282,22 +322,8 @@ def plot_price_chart_with_enter_points(df_original, enter_points_to_plot_df, cur
 
 # --- Main Execution (MODIFIED FOR EXECUTION MODES) ---
 if __name__ == '__main__':
-    # --- Configuration --- 
-    data_file = "USDJPY_Hourly_Bid_2024.01.01_2024.12.31.csv" 
-    data_file = "EURUSD_Hourly_Bid_2025.01.01_2025.09.16.csv"
-    data_file = "EURUSD_Hourly_Bid_2025.01.01_2025.09.16.csv"
-    data_file = "USDCHF_Hourly_Bid_2024.01.01_2025.10.10.csv"
-    
-
-    data_file = "EURUSD_Hourly_Bid_2022.08.19_2023.10.25.csv"
-    data_file = "USDJPY_Hourly_Bid_2022.08.19_2023.10.25.csv"
-    data_file = "GBPUSD_Hourly_Bid_2022.08.19_2023.10.25.csv" # 2022
-    data_file = "GBPUSD_Hourly_Bid_2024.01.01_2025.10.10.csv" # 2025
-    data_file = "USDCAD_Hourly_Bid_2022.08.19_2023.10.25.csv"
-    data_file = "AUDUSD_Hourly_Bid_2024.01.01_2025.10.10.csv" # 2025
-    data_file = "AUDUSD_Hourly_Bid_2022.08.19_2023.10.25.csv"
-    data_file = "EURUSD_Hourly_Bid_2025.01.01_2025.09.16.csv"
-    data_file = "USDCHF_Hourly_Bid_2022.08.19_2023.10.25.csv"
+    # --- Configuration ---  
+    data_file = "USDCHF_RealTime_2.csv"
 
     
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
