@@ -1,6 +1,7 @@
 
 
 ipython
+py -m IPython
 
 %autoindent
 
