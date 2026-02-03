@@ -1,8 +1,8 @@
 
-
 ipython
 
 %autoindent 
+
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -353,10 +353,10 @@ def perform_advanced_validation(results_df,
     return enter_points_df, all_forecasts_df
 
 
-def calculate_strategy_kpi(enter_points_df, FORECAST_COUNT_2=1, FORECAST_COUNT_3=1, FORECAST_COUNT_4=1, FORECAST_COUNT_5=1):
+def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation=2.0, FORECAST_COUNT_2=1, FORECAST_COUNT_3=1, FORECAST_COUNT_4=1, FORECAST_COUNT_5=1):
     """
     Calculates the efficiency of the trading strategy and a KPI based on selected Forecast Counts.
-    KPI = (Number of Successes * 4) - Total Number of Rows
+    KPI = Sum of Trade Results
     """
     if enter_points_df.empty: return 0
     
@@ -373,13 +373,78 @@ def calculate_strategy_kpi(enter_points_df, FORECAST_COUNT_2=1, FORECAST_COUNT_3
         
     if filtered_df.empty: return 0
     
-    success_count = filtered_df['Has_Fractal_Nearby'].sum()
-    total_rows = len(filtered_df)
+    total_trade_result = 0
     
-    #kpi = (success_count * 3) - total_rows
-    kpi = (success_count  ) - 0.1 * (total_rows - success_count)
-    
-    return kpi
+    for index, row in filtered_df.iterrows(): 
+        if not row['Has_Fractal_Nearby']:
+            total_trade_result -= 1
+            continue
+            
+        loc = row['Enter_Point_Location']
+        search_start = max(0, int(loc) - 2)
+        search_end = min(len(df_with_discovery_fractals), int(loc) + 3)
+        
+        best_fractal_idx = -1
+        min_dist = float('inf')
+        fractal_type = None
+        
+        for i in range(search_start, search_end):
+            f_type = df_with_discovery_fractals.at[i, 'Fractal']
+            if f_type in ['High', 'Low']:
+                dist = abs(loc - i)
+                if dist < min_dist:
+                    min_dist = dist; best_fractal_idx = i; fractal_type = f_type
+        
+        if best_fractal_idx == -1: continue
+            
+        idx = best_fractal_idx
+        if fractal_type == 'Low': # Buy
+            trade_enter = df_with_discovery_fractals.at[idx, 'Close']; stop_loss = df_with_discovery_fractals.at[idx, 'Low']
+            trade_risk = trade_enter - stop_loss
+            if trade_risk <= 0: continue
+            max_trade_high = trade_enter
+            for k in range(1, 11):
+                curr_idx = idx + k
+                if curr_idx >= len(df_with_discovery_fractals): break
+                curr_low = df_with_discovery_fractals.at[curr_idx, 'Low']; curr_high = df_with_discovery_fractals.at[curr_idx, 'High']
+                if curr_low > stop_loss:
+                    if curr_high > max_trade_high: max_trade_high = curr_high
+                else:
+                    if curr_high > max_trade_high: max_trade_high = curr_high
+                    break
+            ratio = (max_trade_high - trade_enter) / trade_risk
+            
+            if ratio >= take_profit_expectation:
+                total_trade_result += take_profit_expectation
+            elif ratio >= 1:
+                total_trade_result += 0
+            else:
+                total_trade_result -= 1
+            
+        elif fractal_type == 'High': # Sell
+            trade_enter = df_with_discovery_fractals.at[idx, 'Close']; stop_loss = df_with_discovery_fractals.at[idx, 'High']
+            trade_risk = stop_loss - trade_enter
+            if trade_risk <= 0: continue
+            max_trade_low = trade_enter
+            for k in range(1, 11):
+                curr_idx = idx + k
+                if curr_idx >= len(df_with_discovery_fractals): break
+                curr_low = df_with_discovery_fractals.at[curr_idx, 'Low']; curr_high = df_with_discovery_fractals.at[curr_idx, 'High']
+                if curr_high < stop_loss:
+                    if curr_low < max_trade_low: max_trade_low = curr_low
+                else:
+                    if curr_low < max_trade_low: max_trade_low = curr_low
+                    break
+            ratio = (trade_enter - max_trade_low) / trade_risk
+            
+            if ratio >= take_profit_expectation:
+                total_trade_result += take_profit_expectation
+            elif ratio >= 1:
+                total_trade_result += 0
+            else:
+                total_trade_result -= 1
+            
+    return total_trade_result
 
 # --- Stage 4: Visualization Functions ---
 def check_fib_ratio_in_lengths(lengths, tolerance=0.04):
@@ -520,20 +585,6 @@ def plot_price_chart_with_enter_points(df_original, enter_points_to_plot_df, cur
     filter_desc = " (No Filters)" if not applied_filters_names else f" (Filters: {', '.join(applied_filters_names)})"; chart_title = f"{currency_pair.upper()} Price Chart with Enter Points{filter_desc}"
     fig.update_layout(title=chart_title, xaxis_title='Time', yaxis_title='Price', xaxis_rangeslider_visible=False, template='plotly_white', hovermode='x unified'); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     chart_filename = 'price_chart_with_enter_points.html'; fig.write_html(chart_filename); print(f"\nPrice chart saved successfully as '{chart_filename}'"); webbrowser.open('file://' + os.path.realpath(chart_filename)); print(f"Opening '{chart_filename}' in your web browser...")
-
-    # --- DYNAMIC TITLE BASED ON FILTERS ---
-    filter_desc = " (No Filters)" if not applied_filters_names else f" (Filters: {', '.join(applied_filters_names)})"
-    chart_title = f"{currency_pair.upper()} Price Chart with Enter Points (F_Count >= {min_forecast_count}){filter_desc}"
-    
-    fig.update_layout(title=chart_title, xaxis_title='Time', yaxis_title='Price', xaxis_rangeslider_visible=False, template='plotly_white', hovermode='x unified')
-    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
-    
-    chart_filename = 'price_chart_with_enter_points.html'
-    fig.write_html(chart_filename)
-    print(f"\nPrice chart saved successfully as '{chart_filename}'")
-    webbrowser.open('file://' + os.path.realpath(chart_filename))
-    print(f"Opening '{chart_filename}' in your web browser...")
-    
 def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent_df, currency_pair, min_forecast_count=3, apply_filter_unique=False, apply_filter_no_fib=False):
     # (Unchanged)
     print(f"\nReal-Time Mode: Generating price chart with Enter Points (Forecast Count >= {min_forecast_count})...")
@@ -598,7 +649,7 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 if __name__ == '__main__':
     # --- Configuration ---
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
-    TARGET_CURRENCY_PAIR = "EURUSD" 
+    TARGET_CURRENCY_PAIR = "USDCHF" 
     
     # --- NEW: History Length for Real-Time Mode ---
     REAL_TIME_MONTHS = 4
@@ -612,6 +663,7 @@ if __name__ == '__main__':
     GRID_MATCH_TOLERANCE = 0.55
     GRID_VALIDATION_TOLERANCE = 0.65
     MIN_FORECAST_COUNT_FOR_CHART = 3
+    TAKE_PROFIT_EXPECTATION = 2.0
     QUANTILE_THRESHOLD_3 = 0.68
     QUANTILE_THRESHOLD_4 = 0.84
     QUANTILE_THRESHOLD_5 = 0.71
@@ -647,6 +699,7 @@ if __name__ == '__main__':
             FRACTAL_LEVEL_DISCOVERY = settings.get("discovery_fractal_level", 0)
             FRACTAL_LEVEL_VALIDATION = settings.get("validation_fractal_level", 0)
             MIN_FORECAST_COUNT_FOR_CHART = settings.get("min_forecast_count_chart", 0)
+            TAKE_PROFIT_EXPECTATION = settings.get("take_profit_expectation", 2.0)
             
             QUANTILE_THRESHOLD_3 = settings.get("quantile_threshold_3", 0)
             QUANTILE_THRESHOLD_4 = settings.get("quantile_threshold_4", 0)
@@ -672,6 +725,7 @@ if __name__ == '__main__':
             print(f"  Grid Match Tolerance: {GRID_MATCH_TOLERANCE}")
             print(f"  Grid Validation Tolerance: {GRID_VALIDATION_TOLERANCE}")
             print(f"  Apply Unique Lengths Filter: {APPLY_FILTER_UNIQUE_LENGTHS}")
+            print(f"  Take Profit Expectation: {TAKE_PROFIT_EXPECTATION}")
             print(f"  Apply No Fibo Ratio Filter: {APPLY_FILTER_NO_FIB_RATIO}")
             print(f"  Min Forecast Count for Price Chart: {MIN_FORECAST_COUNT_FOR_CHART}")
             print(f"  Quantile Thresholds: 3->{QUANTILE_THRESHOLD_3}, 4->{QUANTILE_THRESHOLD_4}, 5->{QUANTILE_THRESHOLD_5}")
@@ -692,7 +746,7 @@ if __name__ == '__main__':
                     print("\nCould not identify any top-performing cycle lengths.")
                 else:
                     print(f"\nUsing newly discovered cycle lengths: {good_cycle_lengths}")
-                    enter_points_df, all_forecasts_df = perform_advanced_validation(results, validation_fractals_indices, good_cycle_lengths, tolerance_window=GRID_MATCH_TOLERANCE)
+                    enter_points_df, all_forecasts_df = perform_advanced_validation(results, validation_fractals_indices, good_cycle_lengths, tolerance_window=GRID_VALIDATION_TOLERANCE)
                     
                     if not enter_points_df.empty:
                         print(f"\n--- CLUSTERED 'ENTER POINT' ANALYSIS ---")
@@ -714,7 +768,7 @@ if __name__ == '__main__':
                             if "No Fibo Ratio Lengths" not in applied_filters_names: applied_filters_names.append("No Fibo Ratio Lengths")
                         
                         
-                        KPI = calculate_strategy_kpi(enter_points_df, FORECAST_COUNT_2=FORECAST_COUNT_2, FORECAST_COUNT_3=FORECAST_COUNT_3, FORECAST_COUNT_4=FORECAST_COUNT_4, FORECAST_COUNT_5=FORECAST_COUNT_5)
+                        KPI = calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation=TAKE_PROFIT_EXPECTATION, FORECAST_COUNT_2=FORECAST_COUNT_2, FORECAST_COUNT_3=FORECAST_COUNT_3, FORECAST_COUNT_4=FORECAST_COUNT_4, FORECAST_COUNT_5=FORECAST_COUNT_5)
                         print(f"\nStrategy KPI (Current Run): {KPI}")
 
                         plot_filtered_success_rate_comparison(enter_points_df, 
@@ -874,8 +928,8 @@ if __name__ == '__main__':
         optimization_results = []
         
         # --- Genetic Algorithm Settings ---
-        POPULATION_SIZE = 40
-        GENERATIONS = 35
+        POPULATION_SIZE = 30 # 40
+        GENERATIONS = 40
         MUTATION_RATE = 0.4  # Increased slightly
         ELITISM_COUNT = 3    # Reduced to prevent premature convergence
 
@@ -883,13 +937,18 @@ if __name__ == '__main__':
             return {
                 'GRID_MATCH_TOLERANCE': round(random.uniform(0.3, 0.65), 2),
                 'GRID_VALIDATION_TOLERANCE': 0.65,
+
                 'FRACTAL_LEVEL_DISCOVERY': random.choice([3, 4, 5]),
                 'FRACTAL_LEVEL_VALIDATION': 3,
+                
+                'TAKE_PROFIT_EXPECTATION': round(random.uniform(1.5, 5.0), 2),
+
                 'QUANTILE_THRESHOLD_3': round(random.uniform(0.6, 0.9), 2),
                 'QUANTILE_THRESHOLD_4': round(random.uniform(0.55, 0.85), 2),
                 'QUANTILE_THRESHOLD_5': round(random.uniform(0.5, 0.8), 2),
+
                 'FORECAST_COUNT_2': random.choice([0, 1]),
-                'FORECAST_COUNT_3': 1, #random.choice([0, 1]),
+                'FORECAST_COUNT_3': random.choice([0, 1]),
                 'FORECAST_COUNT_4': random.choice([0, 1]),
                 'FORECAST_COUNT_5': random.choice([0, 1]),
                 'KPI': -float('inf')
@@ -911,6 +970,9 @@ if __name__ == '__main__':
             # Mutate Fractal Discovery
             if random.random() < 0.2:
                 ind['FRACTAL_LEVEL_DISCOVERY'] = max(3, min(6, ind['FRACTAL_LEVEL_DISCOVERY'] + random.choice([-1, 1])))
+            # Mutate Take Profit
+            if random.random() < 0.3:
+                ind['TAKE_PROFIT_EXPECTATION'] = round(max(1.1, min(8.0, ind['TAKE_PROFIT_EXPECTATION'] + random.uniform(-0.5, 0.5))), 2)
             # Mutate Quantiles
             for q in ['QUANTILE_THRESHOLD_3', 'QUANTILE_THRESHOLD_4', 'QUANTILE_THRESHOLD_5']:
                 if random.random() < 0.3:
@@ -956,6 +1018,7 @@ if __name__ == '__main__':
                 p_grid_val_tolerance = ind['GRID_VALIDATION_TOLERANCE']
                 p_fractal_disc = ind['FRACTAL_LEVEL_DISCOVERY']
                 p_fractal_val = ind['FRACTAL_LEVEL_VALIDATION']
+                p_tp = ind['TAKE_PROFIT_EXPECTATION']
                 p_q3 = ind['QUANTILE_THRESHOLD_3']
                 p_q4 = ind['QUANTILE_THRESHOLD_4']
                 p_q5 = ind['QUANTILE_THRESHOLD_5']
@@ -979,7 +1042,7 @@ if __name__ == '__main__':
                     if good_cycles:
                         enter_points_df, _ = perform_advanced_validation(results, val_indices, good_cycles, tolerance_window=p_grid_val_tolerance)
                         if not enter_points_df.empty:
-                            kpi_value = calculate_strategy_kpi(enter_points_df, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
+                            kpi_value = calculate_strategy_kpi(enter_points_df, df_disc, take_profit_expectation=p_tp, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
                 
                 ind['KPI'] = kpi_value
                 
@@ -992,7 +1055,7 @@ if __name__ == '__main__':
                 log_entry['Time'] = str(duration)
                 optimization_results.append(log_entry)
                 
-                print(f"  Ind {idx+1}: KPI={kpi_value:.1f} | Tol={p_grid_tolerance} | ValTol={p_grid_val_tolerance} | Disc={p_fractal_disc} | Q=[{p_q3},{p_q4},{p_q5}]")
+                print(f"  Ind {idx+1}: KPI={kpi_value:.1f} | TP={p_tp} | Tol={p_grid_tolerance} | Disc={p_fractal_disc} | Q=[{p_q3},{p_q4},{p_q5}]")
 
             # Sort by KPI Descending
             population.sort(key=lambda x: x['KPI'], reverse=True)
@@ -1066,6 +1129,7 @@ if __name__ == '__main__':
             "validation_fractal_level": int(best_row['FRACTAL_LEVEL_VALIDATION']),
             "grid_match_tolerance": float(best_row['GRID_MATCH_TOLERANCE']),
             "grid_validation_tolerance": float(best_row['GRID_VALIDATION_TOLERANCE']),
+            "take_profit_expectation": float(best_row['TAKE_PROFIT_EXPECTATION']),
             "min_forecast_count_chart": 3,
             "quantile_threshold_3": float(best_row['QUANTILE_THRESHOLD_3']),
             "quantile_threshold_4": float(best_row['QUANTILE_THRESHOLD_4']),
