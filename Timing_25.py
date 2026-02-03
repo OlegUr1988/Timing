@@ -1,4 +1,5 @@
 
+
 ipython
 
 %autoindent 
@@ -357,8 +358,9 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
     """
     Calculates the efficiency of the trading strategy and a KPI based on selected Forecast Counts.
     KPI = Sum of Trade Results
+    Returns: (total_trade_result, filtered_df_with_outcomes)
     """
-    if enter_points_df.empty: return 0
+    if enter_points_df.empty: return 0, pd.DataFrame()
     
     filtered_df = enter_points_df.copy()
     
@@ -371,13 +373,16 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
     if FORECAST_COUNT_5 == 0:
         filtered_df = filtered_df[filtered_df['Forecast_Count'] != 5]
         
-    if filtered_df.empty: return 0
+    if filtered_df.empty: return 0, pd.DataFrame()
     
     total_trade_result = 0
+    filtered_df['Trade_Outcome'] = np.nan
+    filtered_df['Trade_Outcome'] = filtered_df['Trade_Outcome'].astype(object)
     
     for index, row in filtered_df.iterrows(): 
         if not row['Has_Fractal_Nearby']:
             total_trade_result -= 1
+            filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             continue
             
         loc = row['Enter_Point_Location']
@@ -416,10 +421,13 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
             
             if ratio >= take_profit_expectation:
                 total_trade_result += take_profit_expectation
+                filtered_df.at[index, 'Trade_Outcome'] = True # Win
             elif ratio >= 1:
                 total_trade_result += 0
+                filtered_df.at[index, 'Trade_Outcome'] = 0 # Neutral
             else:
                 total_trade_result -= 1
+                filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             
         elif fractal_type == 'High': # Sell
             trade_enter = df_with_discovery_fractals.at[idx, 'Close']; stop_loss = df_with_discovery_fractals.at[idx, 'High']
@@ -439,12 +447,15 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
             
             if ratio >= take_profit_expectation:
                 total_trade_result += take_profit_expectation
+                filtered_df.at[index, 'Trade_Outcome'] = True # Win
             elif ratio >= 1:
                 total_trade_result += 0
+                filtered_df.at[index, 'Trade_Outcome'] = 0 # Neutral
             else:
                 total_trade_result -= 1
+                filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             
-    return total_trade_result
+    return total_trade_result, filtered_df
 
 # --- Stage 4: Visualization Functions ---
 def check_fib_ratio_in_lengths(lengths, tolerance=0.04):
@@ -543,6 +554,7 @@ def plot_price_chart_with_enter_points(df_original, enter_points_to_plot_df, cur
         y_min, y_max = df_original['Low'].min(), df_original['High'].max()
         success_x, success_y, success_text = [], [], []
         failure_x, failure_y, failure_text = [], [], []
+        neutral_x, neutral_y, neutral_text = [], [], []
         lines_x, lines_y = [], []
 
         for _, row in tqdm(filtered_enter_points.iterrows(), total=filtered_enter_points.shape[0], desc="Calculating markers"):
@@ -563,24 +575,42 @@ def plot_price_chart_with_enter_points(df_original, enter_points_to_plot_df, cur
             price_at_location = close_prices_np[price_idx]
             
             hover_txt = f'FC: {row["Forecast_Count"]}<br>Fractal: {row["Has_Fractal_Nearby"]}'
+            if 'Trade_Outcome' in row:
+                hover_txt += f'<br>Outcome: {row["Trade_Outcome"]}'
             
             # Collect Line Data (using None to break the line between points)
             lines_x.extend([precise_timestamp, precise_timestamp, None])
             lines_y.extend([y_min, y_max, None])
             
             # Collect Marker Data
-            if row['Has_Fractal_Nearby']:
+            # Determine outcome based on Trade_Outcome if available, else fallback to Has_Fractal_Nearby
+            outcome = None
+            if 'Trade_Outcome' in row:
+                val = row['Trade_Outcome']
+                if val is True: outcome = 'win'
+                elif val is False: outcome = 'loss'
+                elif val == 0: outcome = 'neutral'
+            
+            if outcome is None: # Fallback
+                if row['Has_Fractal_Nearby']: outcome = 'win'
+                else: outcome = 'loss'
+
+            if outcome == 'win':
                 success_x.append(precise_timestamp); success_y.append(price_at_location); success_text.append(hover_txt)
+            elif outcome == 'neutral':
+                neutral_x.append(precise_timestamp); neutral_y.append(price_at_location); neutral_text.append(hover_txt)
             else:
                 failure_x.append(precise_timestamp); failure_y.append(price_at_location); failure_text.append(hover_txt)
 
         # Add Batched Traces (Much faster than adding individually)
         if lines_x: fig.add_trace(go.Scatter(x=lines_x, y=lines_y, mode='lines', line=dict(width=1, dash='dash', color='slategray'), hoverinfo='skip', showlegend=False))
+        if neutral_x: fig.add_trace(go.Scatter(x=neutral_x, y=neutral_y, mode='markers', marker=dict(size=10, symbol='circle', color='gray', line=dict(width=2, color='DarkSlateGrey')), hoverinfo='text', text=neutral_text, name='Neutral', showlegend=False))
         if success_x: fig.add_trace(go.Scatter(x=success_x, y=success_y, mode='markers', marker=dict(size=12, symbol='star', color='gold', line=dict(width=2, color='DarkSlateGrey')), hoverinfo='text', text=success_text, name='Success', showlegend=False))
         if failure_x: fig.add_trace(go.Scatter(x=failure_x, y=failure_y, mode='markers', marker=dict(size=12, symbol='x', color='red', line=dict(width=2, color='DarkSlateGrey')), hoverinfo='text', text=failure_text, name='Failure', showlegend=False))
     
     # Add legend entries
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=12, symbol='star', color='gold'), name=f'Success'))
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=10, symbol='circle', color='gray'), name=f'Neutral'))
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(size=12, symbol='x', color='red'), name=f'Failure'))
     filter_desc = " (No Filters)" if not applied_filters_names else f" (Filters: {', '.join(applied_filters_names)})"; chart_title = f"{currency_pair.upper()} Price Chart with Enter Points{filter_desc}"
     fig.update_layout(title=chart_title, xaxis_title='Time', yaxis_title='Price', xaxis_rangeslider_visible=False, template='plotly_white', hovermode='x unified'); fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
@@ -649,13 +679,13 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 if __name__ == '__main__':
     # --- Configuration ---
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
-    TARGET_CURRENCY_PAIR = "USDCHF" 
+    TARGET_CURRENCY_PAIR = "AUDNZD" 
     
     # --- NEW: History Length for Real-Time Mode ---
     REAL_TIME_MONTHS = 4
 
     # --- Execution Mode ---
-    EXECUTION_MODE = 'FULL' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH'
+    EXECUTION_MODE = 'OPTIMUM_SEARCH' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH'
     
     # --- Configurable Parameters ---
     FRACTAL_LEVEL_DISCOVERY = 3
@@ -746,7 +776,7 @@ if __name__ == '__main__':
                     print("\nCould not identify any top-performing cycle lengths.")
                 else:
                     print(f"\nUsing newly discovered cycle lengths: {good_cycle_lengths}")
-                    enter_points_df, all_forecasts_df = perform_advanced_validation(results, validation_fractals_indices, good_cycle_lengths, tolerance_window=GRID_VALIDATION_TOLERANCE)
+                    enter_points_df, all_forecasts_df = perform_advanced_validation(results, validation_fractals_indices, good_cycle_lengths, tolerance_window=GRID_MATCH_TOLERANCE)
                     
                     if not enter_points_df.empty:
                         print(f"\n--- CLUSTERED 'ENTER POINT' ANALYSIS ---")
@@ -768,7 +798,7 @@ if __name__ == '__main__':
                             if "No Fibo Ratio Lengths" not in applied_filters_names: applied_filters_names.append("No Fibo Ratio Lengths")
                         
                         
-                        KPI = calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation=TAKE_PROFIT_EXPECTATION, FORECAST_COUNT_2=FORECAST_COUNT_2, FORECAST_COUNT_3=FORECAST_COUNT_3, FORECAST_COUNT_4=FORECAST_COUNT_4, FORECAST_COUNT_5=FORECAST_COUNT_5)
+                        KPI, updated_enter_points_df = calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation=TAKE_PROFIT_EXPECTATION, FORECAST_COUNT_2=FORECAST_COUNT_2, FORECAST_COUNT_3=FORECAST_COUNT_3, FORECAST_COUNT_4=FORECAST_COUNT_4, FORECAST_COUNT_5=FORECAST_COUNT_5)
                         print(f"\nStrategy KPI (Current Run): {KPI}")
 
                         plot_filtered_success_rate_comparison(enter_points_df, 
@@ -787,8 +817,9 @@ if __name__ == '__main__':
                                                                   currency_pair, 
                                                                   filter_name=combined_filter_name)
                         
+                        # Use updated_enter_points_df which contains the 'Trade_Outcome' column
                         plot_price_chart_with_enter_points(df, 
-                                                           df_for_price_chart, 
+                                                           updated_enter_points_df, 
                                                            currency_pair, 
                                                            FORECAST_COUNT_2=FORECAST_COUNT_2,
                                                            FORECAST_COUNT_3=FORECAST_COUNT_3,
@@ -928,8 +959,8 @@ if __name__ == '__main__':
         optimization_results = []
         
         # --- Genetic Algorithm Settings ---
-        POPULATION_SIZE = 30 # 40
-        GENERATIONS = 40
+        POPULATION_SIZE = 5 # 40
+        GENERATIONS = 5
         MUTATION_RATE = 0.4  # Increased slightly
         ELITISM_COUNT = 3    # Reduced to prevent premature convergence
 
@@ -948,7 +979,7 @@ if __name__ == '__main__':
                 'QUANTILE_THRESHOLD_5': round(random.uniform(0.5, 0.8), 2),
 
                 'FORECAST_COUNT_2': random.choice([0, 1]),
-                'FORECAST_COUNT_3': random.choice([0, 1]),
+                'FORECAST_COUNT_3': 1,
                 'FORECAST_COUNT_4': random.choice([0, 1]),
                 'FORECAST_COUNT_5': random.choice([0, 1]),
                 'KPI': -float('inf')
@@ -979,7 +1010,7 @@ if __name__ == '__main__':
                     delta = random.uniform(-0.06, 0.06) * step_scale
                     ind[q] = round(max(0.4, min(0.95, ind[q] + delta)), 2)
             # Mutate Forecast Counts
-            for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_3', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
                 if random.random() < 0.15:
                     ind[fc] = 1 - ind[fc]
             return ind
@@ -1042,7 +1073,7 @@ if __name__ == '__main__':
                     if good_cycles:
                         enter_points_df, _ = perform_advanced_validation(results, val_indices, good_cycles, tolerance_window=p_grid_val_tolerance)
                         if not enter_points_df.empty:
-                            kpi_value = calculate_strategy_kpi(enter_points_df, df_disc, take_profit_expectation=p_tp, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
+                            kpi_value, _ = calculate_strategy_kpi(enter_points_df, df_disc, take_profit_expectation=p_tp, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
                 
                 ind['KPI'] = kpi_value
                 

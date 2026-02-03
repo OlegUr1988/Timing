@@ -975,20 +975,20 @@ if __name__ == '__main__':
         optimization_results = []
         
         # --- Genetic Algorithm Settings ---
-        POPULATION_SIZE = 35 # 40
-        GENERATIONS = 80
+        POPULATION_SIZE = 50 # 40
+        GENERATIONS = 100
         MUTATION_RATE = 0.4  # Increased slightly
         ELITISM_COUNT = 3    # Reduced to prevent premature convergence
 
         def create_individual():
             return {
                 'GRID_MATCH_TOLERANCE': round(random.uniform(0.3, 0.65), 2),
-                'GRID_VALIDATION_TOLERANCE': 0.65,
+                'GRID_VALIDATION_TOLERANCE': 0.5, # 0.65,
 
                 'FRACTAL_LEVEL_DISCOVERY': random.choice([3, 4, 5]),
                 'FRACTAL_LEVEL_VALIDATION': 2,
                 
-                'TAKE_PROFIT_EXPECTATION': round(random.uniform(1.5, 5.0), 2),
+                'TAKE_PROFIT_EXPECTATION': round(random.uniform(1.5, 3.2), 2), #round(random.uniform(1.5, 5.0), 2),
 
                 'QUANTILE_THRESHOLD_3': round(random.uniform(0.6, 0.9), 2),
                 'QUANTILE_THRESHOLD_4': round(random.uniform(0.55, 0.9), 2),
