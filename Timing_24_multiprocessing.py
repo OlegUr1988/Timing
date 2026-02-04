@@ -268,7 +268,8 @@ def discover_and_plot_good_cycles_without_drow(results_df, quantile_3=0.85, quan
 def perform_advanced_validation(results_df, 
                                 validation_fractal_indices, 
                                 good_lengths, 
-                                tolerance_window=0.4, verbose=True):
+                                tolerance_window, #=0.4, 
+                                verbose=True):
     fib_ratios = [0, 0.382, 0.618, 1, 1.272, 1.618, 2.618, 4.236]
     if verbose: print("\nPart 2: Filtering grids using good lengths...")
     if 'Total_Overlaps' not in results_df.columns: results_df['Total_Overlaps'] = results_df[fib_ratios].sum(axis=1)
@@ -305,6 +306,16 @@ def perform_advanced_validation(results_df,
 
     # --- USE VALIDATION FRACTALS & TOLERANCE ---
     all_forecasts_df['Has_Fractal_Overlap'] = all_forecasts_df['location'].apply(lambda loc: any(abs(loc - idx) <= tolerance_window for idx in validation_fractal_indices))
+    ''' 
+    all_forecasts_df['Has_Fractal_Overlap'] = all_forecasts_df['location'].apply(
+        lambda loc: any(
+            (idx >= loc and (idx - loc) <= tolerance_window) or 
+            (idx < loc and (loc - idx) <= 0.15) 
+            for idx in validation_fractal_indices
+        )
+    )
+    '''
+    
     all_forecasts_df.rename(columns={'start': 'Grid_Start_Point', 'location': 'Forecast_Location', 'length': 'Base_Cycle_Length'}, inplace=True)
     
     if verbose: print("Part 2: Finding 'Enter Points'...")
@@ -375,7 +386,7 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
     
     for index, row in filtered_df.iterrows(): 
         if not row['Has_Fractal_Nearby']:
-            total_trade_result -= 1
+            total_trade_result -= 0.6
             continue
             
         loc = row['Enter_Point_Location']
@@ -694,7 +705,7 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 if __name__ == '__main__':
     # --- Configuration ---
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
-    TARGET_CURRENCY_PAIR = "USDCHF" 
+    TARGET_CURRENCY_PAIR = "USDJPY" 
     
     # --- NEW: History Length for Real-Time Mode ---
     REAL_TIME_MONTHS = 4
@@ -975,15 +986,15 @@ if __name__ == '__main__':
         optimization_results = []
         
         # --- Genetic Algorithm Settings ---
-        POPULATION_SIZE = 50 # 40
-        GENERATIONS = 100
+        POPULATION_SIZE = 40 # 40
+        GENERATIONS = 80
         MUTATION_RATE = 0.4  # Increased slightly
         ELITISM_COUNT = 3    # Reduced to prevent premature convergence
 
         def create_individual():
             return {
                 'GRID_MATCH_TOLERANCE': round(random.uniform(0.3, 0.65), 2),
-                'GRID_VALIDATION_TOLERANCE': 0.5, # 0.65,
+                'GRID_VALIDATION_TOLERANCE': 0.55, # 0.65,
 
                 'FRACTAL_LEVEL_DISCOVERY': random.choice([3, 4, 5]),
                 'FRACTAL_LEVEL_VALIDATION': 2,
@@ -1048,7 +1059,36 @@ if __name__ == '__main__':
             return max(selection, key=lambda x: x['KPI'])
 
         print(f"Starting Genetic Optimization: {GENERATIONS} Generations, Population {POPULATION_SIZE}")
-        population = [create_individual() for _ in range(POPULATION_SIZE)]
+        population = []
+
+        # --- Load Seed from Database ---
+        cycles_db = load_cycles_from_file(CYCLES_DATABASE_FILE)
+        if currency_pair in cycles_db:
+            print(f"Loading existing best settings for {currency_pair} to seed optimization...")
+            existing = cycles_db[currency_pair]
+            try:
+                seed_ind = {
+                    'GRID_MATCH_TOLERANCE': existing.get('grid_match_tolerance', 0.5),
+                    'GRID_VALIDATION_TOLERANCE': existing.get('grid_validation_tolerance', 0.65),
+                    'FRACTAL_LEVEL_DISCOVERY': existing.get('discovery_fractal_level', 3),
+                    'FRACTAL_LEVEL_VALIDATION': existing.get('validation_fractal_level', 3),
+                    'TAKE_PROFIT_EXPECTATION': existing.get('take_profit_expectation', 2.0),
+                    'QUANTILE_THRESHOLD_3': existing.get('quantile_threshold_3', 0.85),
+                    'QUANTILE_THRESHOLD_4': existing.get('quantile_threshold_4', 0.70),
+                    'QUANTILE_THRESHOLD_5': existing.get('quantile_threshold_5', 0.60),
+                    'FORECAST_COUNT_2': existing.get('forecast_count_2', 0),
+                    'FORECAST_COUNT_3': existing.get('forecast_count_3', 0),
+                    'FORECAST_COUNT_4': existing.get('forecast_count_4', 1),
+                    'FORECAST_COUNT_5': existing.get('forecast_count_5', 0),
+                    'KPI': -float('inf') # Force re-evaluation
+                }
+                population.append(seed_ind)
+                print("  -> Seed individual added.")
+            except Exception as e:
+                print(f"  -> Failed to load seed individual: {e}")
+
+        while len(population) < POPULATION_SIZE:
+            population.append(create_individual())
         
         best_global_kpi = -float('inf')
         generations_without_improvement = 0

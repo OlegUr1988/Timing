@@ -307,7 +307,13 @@ def perform_advanced_validation(results_df,
     all_forecasts_df = pd.DataFrame(all_forecasts_data)
 
     # --- USE VALIDATION FRACTALS & TOLERANCE ---
-    all_forecasts_df['Has_Fractal_Overlap'] = all_forecasts_df['location'].apply(lambda loc: any(abs(loc - idx) <= tolerance_window for idx in validation_fractal_indices))
+    all_forecasts_df['Has_Fractal_Overlap'] = all_forecasts_df['location'].apply(
+        lambda loc: any(
+            (idx >= loc and (idx - loc) <= tolerance_window) or 
+            (idx < loc and (loc - idx) <= 0.15) 
+            for idx in validation_fractal_indices
+        )
+    )
     all_forecasts_df.rename(columns={'start': 'Grid_Start_Point', 'location': 'Forecast_Location', 'length': 'Base_Cycle_Length'}, inplace=True)
     
     print("Part 2: Finding 'Enter Points'...")
@@ -347,7 +353,11 @@ def perform_advanced_validation(results_df,
         avg_location = sum(f['location'] for f in cluster) / len(cluster)
         
         # --- USE VALIDATION FRACTALS & TOLERANCE (winner)---
-        has_fractal = any(abs(avg_location - idx) <= tolerance_window for idx in validation_fractal_indices)
+        has_fractal = any(
+            (idx >= avg_location and (idx - avg_location) <= tolerance_window) or 
+            (idx < avg_location and (avg_location - idx) <= 0.15) 
+            for idx in validation_fractal_indices
+        )
         contributing_ids = [f['Forecast_ID'] for f in cluster]
         validated_points.append({'Enter_Point_Location': avg_location, 'Forecast_Count': len(cluster), 'Has_Fractal_Nearby': has_fractal, 'Contributing_Forecast_IDs': contributing_ids})
     enter_points_df = pd.DataFrame(validated_points)
@@ -679,13 +689,13 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 if __name__ == '__main__':
     # --- Configuration ---
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
-    TARGET_CURRENCY_PAIR = "AUDNZD" 
+    TARGET_CURRENCY_PAIR = "USDCHF" 
     
     # --- NEW: History Length for Real-Time Mode ---
     REAL_TIME_MONTHS = 4
 
     # --- Execution Mode ---
-    EXECUTION_MODE = 'OPTIMUM_SEARCH' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH'
+    EXECUTION_MODE = 'FULL' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH'
     
     # --- Configurable Parameters ---
     FRACTAL_LEVEL_DISCOVERY = 3
