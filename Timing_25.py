@@ -679,7 +679,61 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     chart_filename = f'{currency_pair}_real_time_forecast_chart.html'; fig.write_html(chart_filename); print(f"\nReal-time chart saved successfully as '{chart_filename}'"); webbrowser.open('file://' + os.path.realpath(chart_filename)); print(f"Opening '{chart_filename}' in your web browser...")
 
+def extract_candle_patterns(enter_points_df, price_df, lookback=7):
+    """
+    Extracts OHLC data for 'lookback' candles ending at the Enter Point location.
+    Returns a DataFrame suitable for Pattern Recognition / Time Series Classification.
+    """
+    print(f"\n--- Pattern Recognition: Extracting {lookback}-candle sequences ---")
+    
+    if enter_points_df.empty:
+        print("No enter points to extract patterns from.")
+        return pd.DataFrame()
+        
+    if 'Trade_Outcome' not in enter_points_df.columns:
+        print("Warning: 'Trade_Outcome' column missing. Cannot correlate patterns to success.")
+        return pd.DataFrame()
 
+    patterns_data = []
+    
+    # Ensure we are using the dataframe with the correct index (0 to N)
+    # price_df should be the one used for fractal discovery (reset index)
+    
+    for index, row in tqdm(enter_points_df.iterrows(), total=enter_points_df.shape[0], desc="Extracting Patterns"):
+        loc = row['Enter_Point_Location']
+        outcome = row['Trade_Outcome']
+        
+        # Determine the end index of the window (inclusive)
+        # We take the candle where the point is located (int(loc)) and preceding ones.
+        end_idx = int(loc)
+        start_idx = end_idx - lookback + 1
+        
+        # Check bounds
+        if start_idx < 0 or end_idx >= len(price_df):
+            continue
+            
+        # Extract window
+        window = price_df.iloc[start_idx : end_idx+1].reset_index(drop=True)
+        
+        if len(window) != lookback:
+            continue
+            
+        # Flatten the window into a dictionary
+        pattern_dict = {'Enter_Point_ID': index, 'Trade_Outcome': outcome}
+        
+        for i in range(lookback):
+            # i=0 is the oldest in the window, i=6 is the most recent (at enter point)
+            # We save them as Candle_0 (oldest) to Candle_6 (newest)
+            candle = window.iloc[i]
+            suffix = f"_{i}" # 0 to 6
+            pattern_dict[f'Open{suffix}'] = candle['Open']
+            pattern_dict[f'High{suffix}'] = candle['High']
+            pattern_dict[f'Low{suffix}'] = candle['Low']
+            pattern_dict[f'Close{suffix}'] = candle['Close']
+            
+        patterns_data.append(pattern_dict)
+        
+    return pd.DataFrame(patterns_data)
 
 
 
@@ -688,8 +742,8 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 # --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) ---
 if __name__ == '__main__':
     # --- Configuration ---
-    CYCLES_DATABASE_FILE = "good_cycles_database.json"
-    TARGET_CURRENCY_PAIR = "USDCHF" 
+    CYCLES_DATABASE_FILE = "good_cycles_database.json" 
+    TARGET_CURRENCY_PAIR = "USDJPY" 
     
     # --- NEW: History Length for Real-Time Mode ---
     REAL_TIME_MONTHS = 4
@@ -810,6 +864,13 @@ if __name__ == '__main__':
                         
                         KPI, updated_enter_points_df = calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation=TAKE_PROFIT_EXPECTATION, FORECAST_COUNT_2=FORECAST_COUNT_2, FORECAST_COUNT_3=FORECAST_COUNT_3, FORECAST_COUNT_4=FORECAST_COUNT_4, FORECAST_COUNT_5=FORECAST_COUNT_5)
                         print(f"\nStrategy KPI (Current Run): {KPI}")
+
+                        # --- NEW: Extract and Save Patterns for Classification ---
+                        patterns_df = extract_candle_patterns(updated_enter_points_df, df_with_discovery_fractals, lookback=7)
+                        if not patterns_df.empty:
+                            csv_pattern_filename = f"{currency_pair}_Pattern_Data.csv"
+                            patterns_df.to_csv(csv_pattern_filename, index=False)
+                            print(f"Successfully saved {len(patterns_df)} patterns to '{csv_pattern_filename}'")
 
                         plot_filtered_success_rate_comparison(enter_points_df, 
                                                               filtered_ep_unique_length, 
