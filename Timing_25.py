@@ -1,12 +1,8 @@
 
 
-ipython
-
-%autoindent 
-
-
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from tqdm import tqdm
 import webbrowser
 import os
@@ -16,6 +12,9 @@ import datetime
 from itertools import combinations
 import yfinance as yf # Added for data fetching
 import random
+import glob
+import ast
+import sys
 
 # --- Stage 0: Functions for Saving/Loading Settings ---
 def load_cycles_from_file(filename):
@@ -363,6 +362,62 @@ def perform_advanced_validation(results_df,
     enter_points_df = pd.DataFrame(validated_points)
     return enter_points_df, all_forecasts_df
 
+def extract_candle_patterns(enter_points_df, price_df, lookback=7):
+    """
+    Step 1 of Pattern Recognition:
+    Extracts and normalizes candlestick patterns leading up to each enter point.
+    Returns a DataFrame where each row is a normalized pattern vector + trade outcome.
+    """
+    print(f"\n--- Pattern Recognition: Extracting {lookback}-candle sequences ---")
+    patterns = []
+    
+    if enter_points_df.empty:
+        print("No enter points to extract patterns from.")
+        return pd.DataFrame()
+
+    if 'Trade_Outcome' not in enter_points_df.columns:
+        print("Warning: 'Trade_Outcome' column missing. Cannot correlate patterns to success.")
+        return pd.DataFrame()
+
+    # Pre-convert price columns to numpy arrays for performance
+    # price_df should be the one used for fractal discovery (reset index)
+    opens = price_df['Open'].values
+    highs = price_df['High'].values
+    lows = price_df['Low'].values
+    closes = price_df['Close'].values
+    
+    for index, row in tqdm(enter_points_df.iterrows(), total=enter_points_df.shape[0], desc="Extracting Patterns"):
+        loc = row['Enter_Point_Location']
+        outcome = row['Trade_Outcome']
+        
+        # Determine the end index of the window (inclusive)
+        end_idx = int(loc)
+        start_idx = end_idx - lookback + 1
+        
+        # Check bounds
+        if start_idx < 0 or end_idx >= len(price_df):
+            continue
+            
+        # Extract the window
+        p_opens = opens[start_idx:end_idx+1]
+        p_highs = highs[start_idx:end_idx+1]
+        p_lows = lows[start_idx:end_idx+1]
+        p_closes = closes[start_idx:end_idx+1]
+        
+        if len(p_opens) != lookback:
+            continue
+
+        # --- Normalization (Min-Max Scaling) ---
+        min_val = np.min(p_lows)
+        max_val = np.max(p_highs)
+        range_val = max_val - min_val
+        if range_val == 0: range_val = 1.0
+        
+        norm_vector = np.column_stack(((p_opens - min_val)/range_val, (p_highs - min_val)/range_val, (p_lows - min_val)/range_val, (p_closes - min_val)/range_val)).flatten()
+        
+        patterns.append({'Original_Index': index, 'Pattern_Vector': norm_vector.tolist(), 'Trade_Outcome': outcome})
+        
+    return pd.DataFrame(patterns)
 
 def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation=2.0, FORECAST_COUNT_2=1, FORECAST_COUNT_3=1, FORECAST_COUNT_4=1, FORECAST_COUNT_5=1):
     """
@@ -679,77 +734,23 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
     chart_filename = f'{currency_pair}_real_time_forecast_chart.html'; fig.write_html(chart_filename); print(f"\nReal-time chart saved successfully as '{chart_filename}'"); webbrowser.open('file://' + os.path.realpath(chart_filename)); print(f"Opening '{chart_filename}' in your web browser...")
 
-def extract_candle_patterns(enter_points_df, price_df, lookback=7):
-    """
-    Extracts OHLC data for 'lookback' candles ending at the Enter Point location.
-    Returns a DataFrame suitable for Pattern Recognition / Time Series Classification.
-    """
-    print(f"\n--- Pattern Recognition: Extracting {lookback}-candle sequences ---")
-    
-    if enter_points_df.empty:
-        print("No enter points to extract patterns from.")
-        return pd.DataFrame()
-        
-    if 'Trade_Outcome' not in enter_points_df.columns:
-        print("Warning: 'Trade_Outcome' column missing. Cannot correlate patterns to success.")
-        return pd.DataFrame()
 
-    patterns_data = []
-    
-    # Ensure we are using the dataframe with the correct index (0 to N)
-    # price_df should be the one used for fractal discovery (reset index)
-    
-    for index, row in tqdm(enter_points_df.iterrows(), total=enter_points_df.shape[0], desc="Extracting Patterns"):
-        loc = row['Enter_Point_Location']
-        outcome = row['Trade_Outcome']
-        
-        # Determine the end index of the window (inclusive)
-        # We take the candle where the point is located (int(loc)) and preceding ones.
-        end_idx = int(loc)
-        start_idx = end_idx - lookback + 1
-        
-        # Check bounds
-        if start_idx < 0 or end_idx >= len(price_df):
-            continue
-            
-        # Extract window
-        window = price_df.iloc[start_idx : end_idx+1].reset_index(drop=True)
-        
-        if len(window) != lookback:
-            continue
-            
-        # Flatten the window into a dictionary
-        pattern_dict = {'Enter_Point_ID': index, 'Trade_Outcome': outcome}
-        
-        for i in range(lookback):
-            # i=0 is the oldest in the window, i=6 is the most recent (at enter point)
-            # We save them as Candle_0 (oldest) to Candle_6 (newest)
-            candle = window.iloc[i]
-            suffix = f"_{i}" # 0 to 6
-            pattern_dict[f'Open{suffix}'] = candle['Open']
-            pattern_dict[f'High{suffix}'] = candle['High']
-            pattern_dict[f'Low{suffix}'] = candle['Low']
-            pattern_dict[f'Close{suffix}'] = candle['Close']
-            
-        patterns_data.append(pattern_dict)
-        
-    return pd.DataFrame(patterns_data)
 
 
 
 
 
 # --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) ---
-if __name__ == '__main__':
+def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88):
     # --- Configuration ---
-    CYCLES_DATABASE_FILE = "good_cycles_database.json" 
-    TARGET_CURRENCY_PAIR = "USDJPY" 
+    CYCLES_DATABASE_FILE = "good_cycles_database.json"
+    TARGET_CURRENCY_PAIR = target_currency_pair
     
     # --- NEW: History Length for Real-Time Mode ---
     REAL_TIME_MONTHS = 4
 
     # --- Execution Mode ---
-    EXECUTION_MODE = 'FULL' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH'
+    EXECUTION_MODE = execution_mode # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
     
     # --- Configurable Parameters ---
     FRACTAL_LEVEL_DISCOVERY = 3
@@ -866,7 +867,7 @@ if __name__ == '__main__':
                         print(f"\nStrategy KPI (Current Run): {KPI}")
 
                         # --- NEW: Extract and Save Patterns for Classification ---
-                        patterns_df = extract_candle_patterns(updated_enter_points_df, df_with_discovery_fractals, lookback=7)
+                        patterns_df = extract_candle_patterns(updated_enter_points_df, df_with_discovery_fractals, lookback=17)
                         if not patterns_df.empty:
                             csv_pattern_filename = f"{currency_pair}_Pattern_Data.csv"
                             patterns_df.to_csv(csv_pattern_filename, index=False)
@@ -1025,7 +1026,7 @@ if __name__ == '__main__':
         
         # Load data once
         df_base = load_real_data(data_file)
-        if df_base is None: exit()
+        if df_base is None: return
         
         optimization_results = []
         
@@ -1254,9 +1255,147 @@ if __name__ == '__main__':
         results_df.to_csv(results_csv, index=False)
         print(f"Results saved to {results_csv}")
 
+    # --- Mode 5: Pattern Search ---
+    elif EXECUTION_MODE == 'PATTERN_SEARCH':
+        
+        print("\n--- Running in PATTERN SEARCH Mode ---")
+        try:
+            from sklearn.cluster import KMeans
+        except ImportError:
+            print("Error: scikit-learn is required for PATTERN_SEARCH. Please install it: pip install scikit-learn")
+            return
+
+        # 1. Find and Load Data
+        pattern_files = glob.glob("*_Pattern_Data.csv")
+        if not pattern_files:
+            print("No '*_Pattern_Data.csv' files found in the current directory.")
+            print("Run 'FULL' mode (with pattern extraction enabled) to generate data first.")
+            return
+        
+        print(f"Found {len(pattern_files)} pattern files:")
+        for f in pattern_files:
+            print(f"  - {f}")
+        print("Combining data...")
+        
+        dfs = []
+        for f in pattern_files:
+            try:
+                temp_df = pd.read_csv(f)
+                if 'Pattern_Vector' in temp_df.columns and 'Trade_Outcome' in temp_df.columns:
+                    dfs.append(temp_df)
+                else:
+                    print(f"Skipping '{f}': Missing required columns. Please regenerate this pair in 'FULL' mode.")
+            except Exception as e:
+                print(f"Skipping '{f}': Error reading file ({e})")
+
+        if not dfs:
+            print("No valid pattern files loaded. Exiting.")
+            return
+
+        combined_df = pd.concat(dfs, ignore_index=True)
+        
+        if combined_df.empty:
+            print("Combined dataset is empty.")
+            return
+            
+        print(f"Loaded {len(combined_df)} total patterns.")
+        
+        print("Parsing pattern vectors...")
+        # Convert string representation of list back to numpy array
+        try:
+            X = np.array([ast.literal_eval(x) if isinstance(x, str) else x for x in combined_df['Pattern_Vector'].values])
+        except Exception as e:
+            print(f"Error parsing Pattern_Vector: {e}")
+            return
+
+        # --- Apply Feature Weighting (Importance Scaling) ---
+        # Logic: Last 4 candles = High (1.0), Previous 3 = Avg (0.5), Rest = Low (0.2)
+        n_features = X.shape[1]
+        lookback = n_features // 4
+        print(f"Detected lookback: {lookback} candles.")
+        
+        candle_weights = np.full(lookback, 0.2) # Default Low importance
+        if lookback >= 4:
+            candle_weights[-4:] = 1.0 # Last 4 candles High importance
+        if lookback >= 7:
+            candle_weights[-7:-4] = 0.5 # Previous 3 candles Average importance
+            
+        feature_weights = np.repeat(candle_weights, 4) # Expand to OHLC
+        X_weighted = X * feature_weights
+        print(f"Applied weighting scheme to clustering features.")
+
+        # 3. Clustering for Pattern Identification
+        print(f"\n--- Performing K-Means Clustering (k={n_clusters}) to find Optimum Patterns ---")
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=25)
+        clusters = kmeans.fit_predict(X_weighted)
+        combined_df['Cluster'] = clusters
+        
+        # 4. Analyze Clusters
+        cluster_stats = []
+        for c in range(n_clusters):
+            mask = combined_df['Cluster'] == c
+            total = mask.sum()
+            wins = (combined_df[mask]['Trade_Outcome'].astype(str) == 'True').sum()
+            win_rate = (wins / total * 100) if total > 0 else 0
+            cluster_stats.append({'Cluster_ID': c, 'Count': total, 'Win_Rate': win_rate, 'Wins': wins})
+            
+        stats_df = pd.DataFrame(cluster_stats).sort_values('Win_Rate', ascending=False)
+        print("\nTop Patterns (Clusters) by Win Rate:")
+        print(stats_df.head(10))
+        stats_df.to_csv("Optimum_Pattern_Results.csv", index=False)
+        print("\nSaved cluster analysis to 'Optimum_Pattern_Results.csv'")
+        
+        # 5. Visualize Clusters
+        print("\nGenerating cluster visualization...")
+        cols = 5
+        rows = (n_clusters + cols - 1) // cols
+        fig = make_subplots(
+            rows=rows, cols=cols, 
+            subplot_titles=[f"N{row['Cluster_ID']} (WR: {row['Win_Rate']:.1f}%, N: {row['Count']})" for _, row in stats_df.head(n_clusters).iterrows()],
+            vertical_spacing=0.03,
+            horizontal_spacing=0.02
+        )
+
+        for i, (idx, row) in enumerate(stats_df.head(n_clusters).iterrows()):
+            cluster_id = int(row['Cluster_ID'])
+            centroid = kmeans.cluster_centers_[cluster_id]
+            
+            # Un-weight centroid for visualization to show true shape
+            original_centroid = centroid / feature_weights
+            
+            # Reshape centroid to (Lookback, 4) -> Open, High, Low, Close
+            pattern = original_centroid.reshape((lookback, 4))
+            
+            r = (i // cols) + 1
+            c = (i % cols) + 1
+            
+            fig.add_trace(go.Candlestick(
+                x=list(range(lookback)),
+                open=pattern[:, 0],
+                high=pattern[:, 1],
+                low=pattern[:, 2],
+                close=pattern[:, 3],
+                name=f"ID {cluster_id}"
+            ), row=r, col=c)
+            
+            fig.update_xaxes(rangeslider=dict(visible=False), row=r, col=c)
+
+        fig.update_layout(height=rows * 300, width=1400, title_text=f"Optimum Patterns ({n_clusters} Clusters) - Sorted by Win Rate (Normalized)", showlegend=False, template='plotly_white')
+        viz_filename = "Optimum_Pattern_Visualization.html"
+        fig.write_html(viz_filename)
+        print(f"Visualization saved to '{viz_filename}'")
+        webbrowser.open('file://' + os.path.realpath(viz_filename))
+
     else:
         print(f"Error: Invalid EXECUTION_MODE '{EXECUTION_MODE}'. Choose 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', or 'OPTIMUM_SEARCH'.")
 
     now = datetime.datetime.now()
     timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
     print(f"\nAnalysis completed on: {timestamp_str}")
+
+if __name__ == '__main__':
+    main(target_currency_pair="AUDNZD", 
+         execution_mode="PATTERN_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
+         n_clusters=116
+         )
+    

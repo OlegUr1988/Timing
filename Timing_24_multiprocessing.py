@@ -10,6 +10,8 @@ from itertools import combinations
 import yfinance as yf # Added for data fetching
 import random
 import multiprocessing
+import glob
+import ast
 
 # --- Stage 0: Functions for Saving/Loading Settings ---
 def load_cycles_from_file(filename):
@@ -711,7 +713,7 @@ if __name__ == '__main__':
     REAL_TIME_MONTHS = 4
 
     # --- Execution Mode ---
-    EXECUTION_MODE = 'OPTIMUM_SEARCH' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH'
+    EXECUTION_MODE = 'OPTIMUM_SEARCH' # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
     
     # --- Configurable Parameters ---
     FRACTAL_LEVEL_DISCOVERY = 3
@@ -1222,6 +1224,68 @@ if __name__ == '__main__':
         results_csv = f"optimization_results_{currency_pair}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         results_df.to_csv(results_csv, index=False)
         print(f"Results saved to {results_csv}")
+
+    # --- Mode 5: Pattern Search ---
+    elif EXECUTION_MODE == 'PATTERN_SEARCH':
+        print("\n--- Running in PATTERN SEARCH Mode ---")
+        try:
+            from sklearn.cluster import KMeans
+        except ImportError:
+            print("Error: scikit-learn is required for PATTERN_SEARCH. Please install it: pip install scikit-learn")
+            exit()
+
+        # 1. Find and Load Data
+        pattern_files = glob.glob("*_Pattern_Data.csv")
+        if not pattern_files:
+            print("No '*_Pattern_Data.csv' files found in the current directory.")
+            print("Run 'FULL' mode (with pattern extraction enabled) to generate data first.")
+            exit()
+        
+        print(f"Found {len(pattern_files)} pattern files: {pattern_files}")
+        print("Combining data...")
+        combined_df = pd.concat((pd.read_csv(f) for f in pattern_files), ignore_index=True)
+        
+        if combined_df.empty:
+            print("Combined dataset is empty.")
+            exit()
+            
+        print(f"Loaded {len(combined_df)} total patterns.")
+        
+        # 2. Preprocess
+        if 'Pattern_Vector' not in combined_df.columns or 'Trade_Outcome' not in combined_df.columns:
+            print("Error: Required columns 'Pattern_Vector' or 'Trade_Outcome' missing.")
+            exit()
+
+        print("Parsing pattern vectors...")
+        # Convert string representation of list back to numpy array
+        try:
+            X = np.array([ast.literal_eval(x) if isinstance(x, str) else x for x in combined_df['Pattern_Vector'].values])
+            print(f"Data conversion successful. X shape: {X.shape} (Rows, Features)")
+        except Exception as e:
+            print(f"Error parsing Pattern_Vector: {e}")
+            exit()
+
+        # 3. Clustering for Pattern Identification
+        n_clusters = 20
+        print(f"\n--- Performing K-Means Clustering (k={n_clusters}) to find Optimum Patterns ---")
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        clusters = kmeans.fit_predict(X)
+        combined_df['Cluster'] = clusters
+        
+        # 4. Analyze Clusters
+        cluster_stats = []
+        for c in range(n_clusters):
+            mask = combined_df['Cluster'] == c
+            total = mask.sum()
+            wins = (combined_df[mask]['Trade_Outcome'].astype(str) == 'True').sum()
+            win_rate = (wins / total * 100) if total > 0 else 0
+            cluster_stats.append({'Cluster_ID': c, 'Count': total, 'Win_Rate': win_rate, 'Wins': wins})
+            
+        stats_df = pd.DataFrame(cluster_stats).sort_values('Win_Rate', ascending=False)
+        print("\nTop Patterns (Clusters) by Win Rate:")
+        print(stats_df.head(10))
+        stats_df.to_csv("Optimum_Pattern_Results.csv", index=False)
+        print("\nSaved cluster analysis to 'Optimum_Pattern_Results.csv'")
 
     else:
         print(f"Error: Invalid EXECUTION_MODE '{EXECUTION_MODE}'. Choose 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', or 'OPTIMUM_SEARCH'.")
