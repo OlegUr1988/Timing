@@ -1,5 +1,10 @@
 
 
+ipython
+
+%autoindent 
+
+
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -15,6 +20,7 @@ import random
 import glob
 import ast
 import sys
+import joblib # Added for saving/loading the model
 
 # --- Stage 0: Functions for Saving/Loading Settings ---
 def load_cycles_from_file(filename):
@@ -576,7 +582,8 @@ def plot_filtered_success_rate_comparison(original_df, filtered_df, currency_pai
     max_y_orig = aligned_norm_orig_true.max() if not aligned_norm_orig_true.empty else 0; 
     max_y_filt = aligned_norm_filt_true.max() if not aligned_norm_filt_true.empty else 0; 
     fig.update_yaxes(range=[0, max(max_y_orig, max_y_filt) * 1.15])
-    chart_filename = f'compared_success_{filter_name.replace(" ", "_")}.html'; 
+    safe_filter_name = filter_name.replace(" ", "_").replace("&", "and").replace(">=", "_ge_").replace(">", "_gt_").replace("<=", "_le_").replace("<", "_lt_").replace("=", "_eq_").replace("%", "pct").replace("(", "").replace(")", "")
+    chart_filename = f'compared_success_{safe_filter_name}.html'; 
     fig.write_html(chart_filename); 
     print(f"\nComparison chart saved successfully as '{chart_filename}'"); 
     webbrowser.open('file://' + os.path.realpath(chart_filename)); 
@@ -741,7 +748,12 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 
 
 # --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) ---
-def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88):
+def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False):
+    print(f"\n--- Main Execution Started ---")
+    print(f"Target Currency Pair: {target_currency_pair}")
+    print(f"Execution Mode: {execution_mode}")
+    print(f"Number of Clusters: {n_clusters}")
+    print(f"Filter by Cluster: {filter_by_cluster}")
     # --- Configuration ---
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
     TARGET_CURRENCY_PAIR = target_currency_pair
@@ -828,6 +840,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             
             df_with_discovery_fractals = find_fractals(df.copy(), n=FRACTAL_LEVEL_DISCOVERY)
             discovery_fractals_indices = df_with_discovery_fractals.index[df_with_discovery_fractals['Fractal'].notna()].tolist()
+           
             df_with_validation_fractals = find_fractals(df.copy(), n=FRACTAL_LEVEL_VALIDATION)
             validation_fractals_indices = df_with_validation_fractals.index[df_with_validation_fractals['Fractal'].notna()].tolist()
             results = analyze_fibonacci_cycles(df_with_discovery_fractals, 
@@ -868,11 +881,48 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
 
                         # --- NEW: Extract and Save Patterns for Classification ---
                         patterns_df = extract_candle_patterns(updated_enter_points_df, df_with_discovery_fractals, lookback=17)
-                        if not patterns_df.empty:
-                            csv_pattern_filename = f"{currency_pair}_Pattern_Data.csv"
-                            patterns_df.to_csv(csv_pattern_filename, index=False)
-                            print(f"Successfully saved {len(patterns_df)} patterns to '{csv_pattern_filename}'")
+                        
+                        if not filter_by_cluster:
+                            if not patterns_df.empty:
+                                csv_pattern_filename = f"{currency_pair}_Pattern_Data.csv"
+                                patterns_df.to_csv(csv_pattern_filename, index=False)
+                                print(f"Successfully saved {len(patterns_df)} patterns to '{csv_pattern_filename}'")
+                        else:
+                            print("\n--- Applying Cluster-Based Filtering ---")
+                            try:
+                                if not patterns_df.empty:
+                                    kmeans_model = joblib.load("kmeans_model.pkl")
+                                    stats_df = pd.read_csv("Optimum_Pattern_Results.csv")
+                                    good_clusters = stats_df[stats_df['Win_Rate'] >= 10]['Cluster_ID'].values
+                                    print(f"Loaded model. Found {len(good_clusters)} good clusters (WR >= 10%).")
 
+                                    # Prepare Data (Must match training weighting)
+                                    X = np.array(patterns_df['Pattern_Vector'].tolist())
+                                    n_features = X.shape[1]
+                                    lookback = n_features // 4
+                                    candle_weights = np.full(lookback, 0.2)
+                                    if lookback >= 4: candle_weights[-4:] = 1.0
+                                    if lookback >= 7: candle_weights[-7:-4] = 0.5
+                                    feature_weights = np.repeat(candle_weights, 4)
+                                    X_weighted = X * feature_weights
+
+                                    # Predict and Filter
+                                    predicted_clusters = kmeans_model.predict(X_weighted)
+                                    patterns_df['Cluster'] = predicted_clusters
+                                    patterns_df['Is_Good'] = patterns_df['Cluster'].isin(good_clusters)
+                                    
+                                    good_indices = patterns_df[patterns_df['Is_Good']]['Original_Index'].values
+                                    
+                                    before_count = len(updated_enter_points_df)
+                                    updated_enter_points_df = updated_enter_points_df.loc[good_indices].copy()
+                                    enter_points_df = enter_points_df.loc[enter_points_df.index.isin(good_indices)].copy()
+                                    
+                                    print(f"Filtered Enter Points: {before_count} -> {len(updated_enter_points_df)} (Removed {before_count - len(updated_enter_points_df)} bad candidates)")
+                                    applied_filters_names.append("Cluster Filter (WR>=10%)")
+                            except Exception as e:
+                                print(f"Error applying cluster filter: {e}")
+                                print("Ensure 'kmeans_model.pkl' and 'Optimum_Pattern_Results.csv' exist (Run PATTERN_SEARCH first).")
+                                
                         plot_filtered_success_rate_comparison(enter_points_df, 
                                                               filtered_ep_unique_length, 
                                                               currency_pair, 
@@ -1320,6 +1370,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         if lookback >= 7:
             candle_weights[-7:-4] = 0.5 # Previous 3 candles Average importance
             
+        print(f"Candle Weights: {candle_weights}")
         feature_weights = np.repeat(candle_weights, 4) # Expand to OHLC
         X_weighted = X * feature_weights
         print(f"Applied weighting scheme to clustering features.")
@@ -1329,6 +1380,9 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=25)
         clusters = kmeans.fit_predict(X_weighted)
         combined_df['Cluster'] = clusters
+        
+        joblib.dump(kmeans, "kmeans_model.pkl")
+        print("Saved KMeans model to 'kmeans_model.pkl'")
         
         # 4. Analyze Clusters
         cluster_stats = []
@@ -1349,11 +1403,12 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         print("\nGenerating cluster visualization...")
         cols = 5
         rows = (n_clusters + cols - 1) // cols
+        vertical_spacing = 0.15 / rows if rows > 1 else 0.017
         fig = make_subplots(
             rows=rows, cols=cols, 
             subplot_titles=[f"N{row['Cluster_ID']} (WR: {row['Win_Rate']:.1f}%, N: {row['Count']})" for _, row in stats_df.head(n_clusters).iterrows()],
-            vertical_spacing=0.03,
-            horizontal_spacing=0.02
+            vertical_spacing=vertical_spacing,
+            horizontal_spacing=0.017
         )
 
         for i, (idx, row) in enumerate(stats_df.head(n_clusters).iterrows()):
@@ -1394,8 +1449,9 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     print(f"\nAnalysis completed on: {timestamp_str}")
 
 if __name__ == '__main__':
-    main(target_currency_pair="AUDNZD", 
-         execution_mode="PATTERN_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
-         n_clusters=116
+    main(target_currency_pair="EURUSD", 
+         execution_mode="FULL",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
+         n_clusters=124,
+         filter_by_cluster=True
          )
     
