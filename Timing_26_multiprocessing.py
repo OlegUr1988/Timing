@@ -1,7 +1,3 @@
-
-
-
-
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -12,12 +8,13 @@ import numpy as np
 import json
 import datetime
 from itertools import combinations
-import yfinance as yf # Added for data fetching
+import yfinance as yf
 import random
 import glob
 import ast
 import sys
-import joblib # Added for saving/loading the model
+import joblib
+import multiprocessing
 
 # --- Stage 0: Functions for Saving/Loading Settings ---
 def load_cycles_from_file(filename):
@@ -128,10 +125,10 @@ def fetch_recent_data(ticker, months=1.5):
         print(f"Error fetching data via yfinance: {e}"); return None
         
 def find_fractals(df, n):
-    """Identifies fractal highs and lows using NumPy arrays for robustness (CORRECTED LOGIC)."""
+    """Identifies fractal highs and lows using NumPy arrays for robustness."""
     df_copy = df.copy().reset_index(drop=True)
     df_copy['Fractal'] = None
-    print(f"Finding fractals with n={n}...")
+    # print(f"Finding fractals with n={n}...")
     
     high_values = df_copy['High'].values
     low_values = df_copy['Low'].values
@@ -163,7 +160,7 @@ def find_validation_fractals(df, n):
     """
     df_copy = df.copy().reset_index(drop=True)
     df_copy['Fractal'] = None
-    print(f"Finding validation fractals with n={n} (1 candle look-ahead)...")
+    # print(f"Finding validation fractals with n={n} (1 candle look-ahead)...")
     
     high_values = df_copy['High'].values
     low_values = df_copy['Low'].values
@@ -189,7 +186,7 @@ def find_validation_fractals(df, n):
     df_copy['Fractal'] = fractal_results
     return df_copy
 
-# --- Stage 2: Cycle Discovery (MODIFIED) ---
+# --- Stage 2: Cycle Discovery ---
 def analyze_fibonacci_cycles(df, discovery_fractal_indices, tolerance_window=0.4):
     """
     Analyzes the data to find validated Fibonacci grids based on fractals,
@@ -199,10 +196,12 @@ def analyze_fibonacci_cycles(df, discovery_fractal_indices, tolerance_window=0.4
     check_proportions = [p for p in fib_proportions if p not in [0, 1]]
     fractal_indices = discovery_fractal_indices
     validated_grids = []
-    print(f"Part 1: Analyzing fractal pairs (using tolerance_window={tolerance_window})...")
-    disable_tqdm = len(fractal_indices) > 5000
+    # print(f"Part 1: Analyzing fractal pairs (using tolerance_window={tolerance_window})...")
     
-    for i in tqdm(range(len(fractal_indices)), disable=disable_tqdm):
+    # Optimization: Convert to numpy arrays for faster access if needed, 
+    # but for now standard list iteration is okay for smaller datasets.
+    
+    for i in range(len(fractal_indices)):
         start_index = fractal_indices[i]
         for j in range(i + 1, len(fractal_indices)):
             end_index = fractal_indices[j]
@@ -214,9 +213,7 @@ def analyze_fibonacci_cycles(df, discovery_fractal_indices, tolerance_window=0.4
                     grid_point = start_index + prop * base_cycle_length
                     if grid_point < 0 or grid_point > len(df) + 1000: continue
                     for fractal_idx in fractal_indices:
-                        # --- USE THE PARAMETER HERE ---
                         if abs(fractal_idx - grid_point) <= tolerance_window:
-                        # --- ---
                             matches[prop] = 1; additional_matches_count += 1; break
                 if additional_matches_count >= 1:
                     result_row = {'Start': start_index, 'Length': base_cycle_length}
@@ -231,7 +228,7 @@ def discover_and_plot_good_cycles(results_df, quantile_3=0.85, quantile_4=0.70, 
     if 'Total_Overlaps' not in results_df.columns:
          results_df['Total_Overlaps'] = results_df[fib_cols].sum(axis=1)
          
-    baseline_filter = ((results_df['Total_Overlaps'] > 3) #  (results_df['Total_Overlaps'] >= 3)        !!!!!!!!!!!!!!!!!!!
+    baseline_filter = ((results_df['Total_Overlaps'] > 3) 
                        & (results_df[0.382] != 1) 
                        & (results_df[4.236] != 1))
     
@@ -270,7 +267,7 @@ def discover_and_plot_good_cycles(results_df, quantile_3=0.85, quantile_4=0.70, 
     return sorted(list(final_good_lengths))
 
 def discover_and_plot_good_cycles_without_drow(results_df, quantile_3=0.85, quantile_4=0.70, quantile_5=0.60):
-    print("\nPart 1: Identifying best-performing cycle lengths (no charts)...")
+    # print("\nPart 1: Identifying best-performing cycle lengths (no charts)...")
     fib_cols = [0, 0.382, 0.618, 1, 1.272, 1.414, 1.618, 2, 2.618, 3.618, 4.236]
     if 'Total_Overlaps' not in results_df.columns:
          results_df['Total_Overlaps'] = results_df[fib_cols].sum(axis=1)
@@ -280,7 +277,7 @@ def discover_and_plot_good_cycles_without_drow(results_df, quantile_3=0.85, quan
                        & (results_df[4.236] != 1))
     
     baseline_data = results_df[baseline_filter]
-    if baseline_data.empty: print("Warning: Baseline data empty."); return []
+    if baseline_data.empty: return []
     baseline_length_counts = baseline_data['Length'].value_counts()
     quantile_map = {3: quantile_3, 4: quantile_4, 5: quantile_5}
     all_good_lengths = set()
@@ -306,9 +303,9 @@ def discover_and_plot_good_cycles_without_drow(results_df, quantile_3=0.85, quan
 def perform_advanced_validation(results_df, 
                                 validation_fractal_indices, 
                                 good_lengths, 
-                                tolerance_window=0.4):
+                                tolerance_window):
     fib_ratios = [0, 0.382, 0.618, 1, 1.272, 1.414, 1.618, 2, 2.618, 3.618, 4.236]
-    print("\nPart 2: Filtering grids using good lengths...")
+    # print("\nPart 2: Filtering grids using good lengths...")
     if 'Total_Overlaps' not in results_df.columns: results_df['Total_Overlaps'] = results_df[fib_ratios].sum(axis=1)
 
     filtered_results = results_df[results_df['Length'].isin(good_lengths)].copy()
@@ -321,11 +318,11 @@ def perform_advanced_validation(results_df,
         return 4.236 not in overlap_ratios[:3]
     
     filtered_results = filtered_results[filtered_results.apply(is_valid_validation_set, axis=1)]
-    print(f"Filtered down to {len(filtered_results)} valid grids.")
+    # print(f"Filtered down to {len(filtered_results)} valid grids.")
     for ratio in fib_ratios:
         filtered_results[f'loc_{ratio}'] = filtered_results['Start'] + ratio * filtered_results['Length']
     
-    print("Part 2: Identifying forecast points...")
+    # print("Part 2: Identifying forecast points...")
     all_forecasts_data = []
     forecast_id_counter = 0
     for index, row in filtered_results.iterrows():
@@ -345,18 +342,17 @@ def perform_advanced_validation(results_df,
     all_forecasts_df['Has_Fractal_Overlap'] = all_forecasts_df['location'].apply(
         lambda loc: any(
             (idx >= loc and (idx - loc) <= tolerance_window) or 
-            (idx < loc and (loc - idx) <= 0.5) 
+            (idx < loc and (loc - idx) <= 0.5)  
             for idx in validation_fractal_indices
         )
     )
     all_forecasts_df.rename(columns={'start': 'Grid_Start_Point', 'location': 'Forecast_Location', 'length': 'Base_Cycle_Length'}, inplace=True)
     
-    print("Part 2: Finding 'Enter Points'...")
+    # print("Part 2: Finding 'Enter Points'...")
     sorted_forecasts = sorted(all_forecasts_data, key=lambda x: x['location'])
     enter_points_clusters = []
     
     if not sorted_forecasts: # Handle empty list
-        print("No forecast points to cluster.")
         return pd.DataFrame(), all_forecasts_df
 
     current_cluster = [sorted_forecasts[0]]
@@ -382,7 +378,7 @@ def perform_advanced_validation(results_df,
     
     if not enter_points_clusters: return pd.DataFrame(), all_forecasts_df
     
-    print("Part 2: Validating 'Enter Points'...")
+    # print("Part 2: Validating 'Enter Points'...")
     validated_points = []
     for cluster in enter_points_clusters:
         avg_location = sum(f['location'] for f in cluster) / len(cluster)
@@ -482,7 +478,7 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
     
     for index, row in filtered_df.iterrows(): 
         if not row['Has_Fractal_Nearby']:
-            total_trade_result -= 1
+            total_trade_result -= 0.6 # BEFORE IT WAS -1
             filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             continue
             
@@ -504,6 +500,7 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
         if best_fractal_idx == -1: continue
             
         idx = best_fractal_idx
+        
         if fractal_type == 'Low': # Buy
             trade_enter = df_with_discovery_fractals.at[idx, 'Close']; stop_loss = df_with_discovery_fractals.at[idx, 'Low']
             trade_risk = trade_enter - stop_loss
@@ -527,7 +524,7 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
                 total_trade_result += 0
                 filtered_df.at[index, 'Trade_Outcome'] = 0 # Neutral
             else:
-                total_trade_result -= 1
+                total_trade_result -= 1 # BEFORE IT WAS -1
                 filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             
         elif fractal_type == 'High': # Sell
@@ -553,7 +550,7 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
                 total_trade_result += 0
                 filtered_df.at[index, 'Trade_Outcome'] = 0 # Neutral
             else:
-                total_trade_result -= 1
+                total_trade_result -= 1 # BEFORE IT WAS -1
                 filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             
     return total_trade_result, filtered_df
@@ -772,7 +769,77 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
     chart_filename = f'{currency_pair}_real_time_forecast_chart.html'; fig.write_html(chart_filename); print(f"\nReal-time chart saved successfully as '{chart_filename}'"); webbrowser.open('file://' + os.path.realpath(chart_filename)); print(f"Opening '{chart_filename}' in your web browser...")
 
 
+# Global variable for worker processes
+worker_df_base = None
 
+def init_worker(df):
+    global worker_df_base
+    worker_df_base = df
+
+def evaluate_individual_task(ind):
+    global worker_df_base
+    import datetime
+    start_time = datetime.datetime.now()
+    
+    try:
+        # Extract params
+        p_grid_tolerance = ind['GRID_MATCH_TOLERANCE']
+        p_grid_val_tolerance = ind['GRID_VALIDATION_TOLERANCE']
+
+        p_fractal_disc = int(ind['FRACTAL_LEVEL_DISCOVERY'])
+        p_fractal_val = int(ind['FRACTAL_LEVEL_VALIDATION']) 
+
+        p_tp = ind['TAKE_PROFIT_EXPECTATION']
+        p_q3 = ind['QUANTILE_THRESHOLD_3']
+        p_q4 = ind['QUANTILE_THRESHOLD_4']
+        p_q5 = ind['QUANTILE_THRESHOLD_5']
+        p_fc2 = int(ind['FORECAST_COUNT_2'])
+        p_fc3 = int(ind['FORECAST_COUNT_3'])
+        p_fc4 = int(ind['FORECAST_COUNT_4'])
+        p_fc5 = int(ind['FORECAST_COUNT_5'])
+
+        # Execution Logic
+        df_disc = find_fractals(worker_df_base.copy(), n=p_fractal_disc)
+        disc_indices = df_disc.index[df_disc['Fractal'].notna()].tolist()
+        
+        # Use find_validation_fractals as per Timing_25 updates
+        df_val = find_validation_fractals(worker_df_base.copy(), n=p_fractal_val)
+        val_indices = df_val.index[df_val['Fractal'].notna()].tolist()
+        
+        results = analyze_fibonacci_cycles(df_disc, disc_indices, 
+                                           tolerance_window=p_grid_tolerance)
+        
+        kpi_value = -1000 
+        if not results.empty:
+            # Ensure this function exists in the file
+            good_cycles = discover_and_plot_good_cycles_without_drow(results, 
+                                                                     quantile_3=p_q3, quantile_4=p_q4, quantile_5=p_q5)
+            if good_cycles:
+                enter_points_df, _ = perform_advanced_validation(results, 
+                                                                 val_indices, 
+                                                                 good_cycles, 
+                                                                 tolerance_window=p_grid_val_tolerance)
+                enter_points_df, _ = perform_advanced_validation(results, val_indices, good_cycles, tolerance_window=p_grid_val_tolerance)
+                if not enter_points_df.empty:
+                    # calculate_strategy_kpi returns (KPI, df)
+                    kpi_val, _ = calculate_strategy_kpi(enter_points_df, 
+                                                        df_val, 
+                                                        take_profit_expectation=p_tp, 
+                                                        FORECAST_COUNT_2=p_fc2, 
+                                                        FORECAST_COUNT_3=p_fc3, 
+                                                        FORECAST_COUNT_4=p_fc4, 
+                                                        FORECAST_COUNT_5=p_fc5)
+                    kpi_val, _ = calculate_strategy_kpi(enter_points_df, df_val, take_profit_expectation=p_tp, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
+                    kpi_value = kpi_val
+        
+        ind['KPI'] = kpi_value
+        end_time = datetime.datetime.now()
+        duration = end_time - start_time
+        return ind, str(duration)
+    except Exception as e:
+        print(f"Exception in worker: {e}")
+        ind['KPI'] = -9999
+        return ind, "0:00:00"
 
 
 
@@ -827,11 +894,9 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         
         # --- Load Settings from Database ---
         cycles_db = load_cycles_from_file(CYCLES_DATABASE_FILE)
-        loaded_good_cycles = []
         if currency_pair in cycles_db:
             print(f"Loading strategy settings for {currency_pair} from {CYCLES_DATABASE_FILE}...")
             settings = cycles_db[currency_pair]
-            loaded_good_cycles = settings.get("good_cycles", [])
             
             GRID_MATCH_TOLERANCE = settings.get("grid_match_tolerance", 0)
             GRID_VALIDATION_TOLERANCE = settings.get("grid_validation_tolerance", 0.65)
@@ -861,10 +926,8 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             print(f"\nSettings for this run:")
             print(f"  Discovery Fractal Level: {FRACTAL_LEVEL_DISCOVERY}")
             print(f"  Validation Fractal Level: {FRACTAL_LEVEL_VALIDATION}")
-
             print(f"  Grid Match Tolerance: {GRID_MATCH_TOLERANCE}")
             print(f"  Grid Validation Tolerance: {GRID_VALIDATION_TOLERANCE}")
-            
             print(f"  Apply Unique Lengths Filter: {APPLY_FILTER_UNIQUE_LENGTHS}")
             print(f"  Take Profit Expectation: {TAKE_PROFIT_EXPECTATION}")
             print(f"  Apply No Fibo Ratio Filter: {APPLY_FILTER_NO_FIB_RATIO}")
@@ -877,26 +940,18 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             
             df_with_validation_fractals = find_validation_fractals(df.copy(), n=FRACTAL_LEVEL_VALIDATION)
             validation_fractals_indices = df_with_validation_fractals.index[df_with_validation_fractals['Fractal'].notna()].tolist()
-            
             results = analyze_fibonacci_cycles(df_with_discovery_fractals, 
                                                discovery_fractals_indices, 
                                                tolerance_window=GRID_MATCH_TOLERANCE)
             
             if not results.empty:
-                if loaded_good_cycles:
-                    print(f"\nUsing loaded good cycle lengths from database: {loaded_good_cycles}")
-                    good_cycle_lengths = loaded_good_cycles
-                else:
-                    good_cycle_lengths = discover_and_plot_good_cycles(results, quantile_3=QUANTILE_THRESHOLD_3, quantile_4=QUANTILE_THRESHOLD_4, quantile_5=QUANTILE_THRESHOLD_5)
+                good_cycle_lengths = discover_and_plot_good_cycles(results, quantile_3=QUANTILE_THRESHOLD_3, quantile_4=QUANTILE_THRESHOLD_4, quantile_5=QUANTILE_THRESHOLD_5)
                 
                 if not good_cycle_lengths:
                     print("\nCould not identify any top-performing cycle lengths.")
                 else:
                     print(f"\nUsing newly discovered cycle lengths: {good_cycle_lengths}")
-                    enter_points_df, all_forecasts_df = perform_advanced_validation(results, 
-                                                                                    validation_fractals_indices, 
-                                                                                    good_cycle_lengths, 
-                                                                                    tolerance_window=GRID_VALIDATION_TOLERANCE)
+                    enter_points_df, all_forecasts_df = perform_advanced_validation(results, validation_fractals_indices, good_cycle_lengths, tolerance_window=GRID_MATCH_TOLERANCE)
                     
                     if not enter_points_df.empty:
                         print(f"\n--- CLUSTERED 'ENTER POINT' ANALYSIS ---")
@@ -971,11 +1026,21 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                 print(f"Error applying cluster filter: {e}")
                                 print("Ensure 'kmeans_model.pkl' and 'Optimum_Pattern_Results.csv' exist (Run PATTERN_SEARCH first).")
                                 
-                        #plot_filtered_success_rate_comparison(enter_points_df, filtered_ep_unique_length,  currency_pair,  filter_name="Unique Cycle Lengths")
+                        plot_filtered_success_rate_comparison(enter_points_df, 
+                                                              filtered_ep_unique_length, 
+                                                              currency_pair, 
+                                                              filter_name="Unique Cycle Lengths")
                         
-                        #plot_filtered_success_rate_comparison(enter_points_df,  filtered_ep_no_fib_ratio_comp,  currency_pair,  filter_name="No Fibo Ratio Lengths")
-                        
-                        #if applied_filters_names:  combined_filter_name = " & ".join(applied_filters_names);  plot_filtered_success_rate_comparison(enter_points_df,  df_for_price_chart,  currency_pair,  filter_name=combined_filter_name)
+                        plot_filtered_success_rate_comparison(enter_points_df, 
+                                                              filtered_ep_no_fib_ratio_comp, 
+                                                              currency_pair, 
+                                                              filter_name="No Fibo Ratio Lengths")
+                        if applied_filters_names: 
+                            combined_filter_name = " & ".join(applied_filters_names); 
+                            plot_filtered_success_rate_comparison(enter_points_df, 
+                                                                  df_for_price_chart, 
+                                                                  currency_pair, 
+                                                                  filter_name=combined_filter_name)
                         
                         # Use updated_enter_points_df which contains the 'Trade_Outcome' column
                         plot_price_chart_with_enter_points(df, 
@@ -1119,28 +1184,27 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         optimization_results = []
         
         # --- Genetic Algorithm Settings ---
-        POPULATION_SIZE = 40 # 40
-        GENERATIONS = 80
+        POPULATION_SIZE = 90 # 40
+        GENERATIONS = 20
         MUTATION_RATE = 0.4  # Increased slightly
         ELITISM_COUNT = 3    # Reduced to prevent premature convergence
 
         def create_individual():
             return {
-                'GRID_MATCH_TOLERANCE': round(random.uniform(0.3, 0.65), 2),
+                'GRID_MATCH_TOLERANCE': round(random.uniform(0, 0.65), 2), 
                 'GRID_VALIDATION_TOLERANCE': 0.65,
 
-                'FRACTAL_LEVEL_DISCOVERY': random.choice([3, 4, 5]),
-                'FRACTAL_LEVEL_VALIDATION': 3,
+                'FRACTAL_LEVEL_DISCOVERY': random.choice([3, 4]),
+                'FRACTAL_LEVEL_VALIDATION': 2, 
                 
-                'TAKE_PROFIT_EXPECTATION': round(random.uniform(1.5, 5.0), 2),
+                'TAKE_PROFIT_EXPECTATION': round(random.uniform(1.5, 3.2), 2),
 
-                'QUANTILE_THRESHOLD_3': round(random.uniform(0.6, 0.9), 2),
-                'QUANTILE_THRESHOLD_4': round(random.uniform(0.55, 0.85), 2),
-                'QUANTILE_THRESHOLD_5': round(random.uniform(0.5, 0.8), 2),
+                'QUANTILE_THRESHOLD_3': round(random.uniform(0.45, 0.9), 2),
+                'QUANTILE_THRESHOLD_4': round(random.uniform(0.45, 0.9), 2),
+                'QUANTILE_THRESHOLD_5': round(random.uniform(0.45, 0.9), 2), 
 
                 #'FORECAST_COUNT_2': random.choice([0, 1]),
                 'FORECAST_COUNT_2': 1,
-
                 'FORECAST_COUNT_3': 1,
                 'FORECAST_COUNT_4': random.choice([0, 1]),
                 'FORECAST_COUNT_5': random.choice([0, 1]),
@@ -1162,19 +1226,18 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             #     ind['GRID_VALIDATION_TOLERANCE'] = round(max(0.1, min(1.0, ind['GRID_VALIDATION_TOLERANCE'] + delta)), 2)
             # Mutate Fractal Discovery
             if random.random() < 0.2:
-                ind['FRACTAL_LEVEL_DISCOVERY'] = max(3, min(6, ind['FRACTAL_LEVEL_DISCOVERY'] + random.choice([-1, 1])))
+                ind['FRACTAL_LEVEL_DISCOVERY'] = max(3, min(4, ind['FRACTAL_LEVEL_DISCOVERY'] + random.choice([-1, 1])))
             # Mutate Take Profit
             if random.random() < 0.3:
-                ind['TAKE_PROFIT_EXPECTATION'] = round(max(1.1, min(8.0, ind['TAKE_PROFIT_EXPECTATION'] + random.uniform(-0.5, 0.5))), 2)
+                ind['TAKE_PROFIT_EXPECTATION'] = round(max(1.1, min(3.2, ind['TAKE_PROFIT_EXPECTATION'] + random.uniform(-0.5, 0.5))), 2)
             # Mutate Quantiles
             for q in ['QUANTILE_THRESHOLD_3', 'QUANTILE_THRESHOLD_4', 'QUANTILE_THRESHOLD_5']:
                 if random.random() < 0.3:
                     delta = random.uniform(-0.06, 0.06) * step_scale
                     ind[q] = round(max(0.4, min(0.95, ind[q] + delta)), 2)
             # Mutate Forecast Counts
-            
-            # for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
-            for fc in ['FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            #for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            for fc in [ 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
                 if random.random() < 0.15:
                     ind[fc] = 1 - ind[fc]
             return ind
@@ -1194,7 +1257,36 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             return max(selection, key=lambda x: x['KPI'])
 
         print(f"Starting Genetic Optimization: {GENERATIONS} Generations, Population {POPULATION_SIZE}")
-        population = [create_individual() for _ in range(POPULATION_SIZE)]
+        population = []
+
+        # --- Load Seed from Database ---
+        cycles_db = load_cycles_from_file(CYCLES_DATABASE_FILE)
+        if currency_pair in cycles_db:
+            print(f"Loading existing best settings for {currency_pair} to seed optimization...")
+            existing = cycles_db[currency_pair]
+            try:
+                seed_ind = {
+                    'GRID_MATCH_TOLERANCE': existing.get('grid_match_tolerance', 0.5),
+                    'GRID_VALIDATION_TOLERANCE': existing.get('grid_validation_tolerance', 0.65),
+                    'FRACTAL_LEVEL_DISCOVERY': min(4, existing.get('discovery_fractal_level', 3)),
+                    'FRACTAL_LEVEL_VALIDATION': existing.get('validation_fractal_level', 3),
+                    'TAKE_PROFIT_EXPECTATION': min(3.2, existing.get('take_profit_expectation', 2.0)),
+                    'QUANTILE_THRESHOLD_3': existing.get('quantile_threshold_3', 0.85),
+                    'QUANTILE_THRESHOLD_4': existing.get('quantile_threshold_4', 0.70),
+                    'QUANTILE_THRESHOLD_5': existing.get('quantile_threshold_5', 0.60),
+                    'FORECAST_COUNT_2': existing.get('forecast_count_2', 0),
+                    'FORECAST_COUNT_3': existing.get('forecast_count_3', 0),
+                    'FORECAST_COUNT_4': existing.get('forecast_count_4', 1),
+                    'FORECAST_COUNT_5': existing.get('forecast_count_5', 0),
+                    'KPI': -float('inf') # Force re-evaluation
+                }
+                population.append(seed_ind)
+                print("  -> Seed individual added.")
+            except Exception as e:
+                print(f"  -> Failed to load seed individual: {e}")
+
+        while len(population) < POPULATION_SIZE:
+            population.append(create_individual())
         
         best_global_kpi = -float('inf')
         generations_without_improvement = 0
@@ -1203,55 +1295,36 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         for gen in range(GENERATIONS):
             print(f"\n=== Generation {gen + 1} / {GENERATIONS} ===")
             
-            for idx, ind in enumerate(population):
-                if ind['KPI'] != -float('inf'): continue # Skip evaluated (Elites)
+            # Identify individuals that need evaluation
+            individuals_to_eval = [ind for ind in population if ind['KPI'] == -float('inf')]
+            
+            if individuals_to_eval:
+                # Run in parallel
+                with multiprocessing.Pool(processes=multiprocessing.cpu_count(), initializer=init_worker, initargs=(df_base,)) as pool:
+                    results = pool.map(evaluate_individual_task, individuals_to_eval)
                 
-                start_time = datetime.datetime.now()
-                
-                # Extract params for execution
-                p_grid_tolerance = ind['GRID_MATCH_TOLERANCE']
-                p_grid_val_tolerance = ind['GRID_VALIDATION_TOLERANCE']
-                p_fractal_disc = ind['FRACTAL_LEVEL_DISCOVERY']
-                p_fractal_val = ind['FRACTAL_LEVEL_VALIDATION']
-                p_tp = ind['TAKE_PROFIT_EXPECTATION']
-                p_q3 = ind['QUANTILE_THRESHOLD_3']
-                p_q4 = ind['QUANTILE_THRESHOLD_4']
-                p_q5 = ind['QUANTILE_THRESHOLD_5']
-                p_fc2 = ind['FORECAST_COUNT_2']
-                p_fc3 = ind['FORECAST_COUNT_3']
-                p_fc4 = ind['FORECAST_COUNT_4']
-                p_fc5 = ind['FORECAST_COUNT_5']
-
-                # --- Execution Logic ---
-                df_disc = find_fractals(df_base.copy(), n=p_fractal_disc)
-                disc_indices = df_disc.index[df_disc['Fractal'].notna()].tolist()
-                 
-                df_val = find_validation_fractals(df_base.copy(), n=p_fractal_val)
-                
-                val_indices = df_val.index[df_val['Fractal'].notna()].tolist()
-                
-                results = analyze_fibonacci_cycles(df_disc, disc_indices, tolerance_window=p_grid_tolerance)
-                
-                kpi_value = -1000 # Default low value
-                if not results.empty:
-                    good_cycles = discover_and_plot_good_cycles_without_drow(results, quantile_3=p_q3, quantile_4=p_q4, quantile_5=p_q5)
-                    if good_cycles:
-                        enter_points_df, _ = perform_advanced_validation(results, val_indices, good_cycles, tolerance_window=p_grid_val_tolerance)
-                        if not enter_points_df.empty:
-                            kpi_value, _ = calculate_strategy_kpi(enter_points_df, df_val, take_profit_expectation=p_tp, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
-                
-                ind['KPI'] = kpi_value
-                
-                end_time = datetime.datetime.now()
-                duration = end_time - start_time
-                
-                # Logging
-                log_entry = ind.copy()
-                log_entry['Iteration'] = (gen * POPULATION_SIZE) + idx + 1
-                log_entry['Time'] = str(duration)
-                optimization_results.append(log_entry)
-                
-                print(f"  Ind {idx+1}: KPI={kpi_value:.1f} | TP={p_tp} | Tol={p_grid_tolerance} | Disc={p_fractal_disc} | Q=[{p_q3},{p_q4},{p_q5}]")
+                # Update population and log
+                res_idx = 0
+                for i in range(len(population)):
+                    if population[i]['KPI'] == -float('inf'):
+                        updated_ind, duration = results[res_idx]
+                        population[i] = updated_ind
+                        
+                        log_entry = updated_ind.copy()
+                        log_entry['Iteration'] = (gen * POPULATION_SIZE) + i + 1
+                        log_entry['Time'] = duration
+                        optimization_results.append(log_entry)
+                        
+                        p_tp = updated_ind['TAKE_PROFIT_EXPECTATION']
+                        p_grid_tolerance = updated_ind['GRID_MATCH_TOLERANCE']
+                        p_fractal_disc = updated_ind['FRACTAL_LEVEL_DISCOVERY']
+                        p_q3 = updated_ind['QUANTILE_THRESHOLD_3']
+                        p_q4 = updated_ind['QUANTILE_THRESHOLD_4']
+                        p_q5 = updated_ind['QUANTILE_THRESHOLD_5']
+                        kpi_value = updated_ind['KPI']
+                        print(f"  Ind {i+1}: KPI={kpi_value:.1f} | TP={p_tp} | Tol={p_grid_tolerance} | Disc={p_fractal_disc} | Q=[{p_q3},{p_q4},{p_q5}]")
+                        
+                        res_idx += 1
 
             # Sort by KPI Descending
             population.sort(key=lambda x: x['KPI'], reverse=True)
@@ -1276,7 +1349,13 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                 next_gen = population[:ELITISM_COUNT] # Elitism
                 
                 # Fresh Blood: Inject random individuals to maintain diversity
-                fresh_blood_pct = 0.4 if is_stagnant else 0.2
+                #fresh_blood_pct = 0.4 if is_stagnant else 0.2
+                if generations_without_improvement >= 7:
+                    fresh_blood_pct = 0.6
+                elif is_stagnant:
+                    fresh_blood_pct = 0.4
+                else:
+                    fresh_blood_pct = 0.2
                 fresh_blood_count = int(POPULATION_SIZE * fresh_blood_pct)
                 for _ in range(fresh_blood_count):
                     next_gen.append(create_individual())
@@ -1347,6 +1426,19 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         results_csv = f"optimization_results_{currency_pair}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         results_df.to_csv(results_csv, index=False)
         print(f"Results saved to {results_csv}")
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     # --- Mode 5: Pattern Search ---
     elif EXECUTION_MODE == 'PATTERN_SEARCH':
@@ -1446,12 +1538,12 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         print("\nGenerating cluster visualization...")
         cols = 5
         rows = (n_clusters + cols - 1) // cols
-        vertical_spacing = 0.15 / rows if rows > 1 else 0.017
+        vertical_spacing = 0.1 / rows if rows > 1 else 0.01
         fig = make_subplots(
             rows=rows, cols=cols, 
             subplot_titles=[f"N{row['Cluster_ID']} (WR: {row['Win_Rate']:.1f}%, N: {row['Count']})" for _, row in stats_df.head(n_clusters).iterrows()],
             vertical_spacing=vertical_spacing,
-            horizontal_spacing=0.017
+            horizontal_spacing=0.015
         )
 
         for i, (idx, row) in enumerate(stats_df.head(n_clusters).iterrows()):
@@ -1493,8 +1585,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
 
 if __name__ == '__main__':
     main(target_currency_pair="USDJPY", 
-         execution_mode="FULL",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
+         execution_mode="OPTIMUM_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
          n_clusters=124,
-         filter_by_cluster=False 
+         filter_by_cluster=False
          )
-    
