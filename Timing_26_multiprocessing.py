@@ -451,7 +451,7 @@ def extract_candle_patterns(enter_points_df, price_df, lookback=7):
         
     return pd.DataFrame(patterns)
 
-def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation , FORECAST_COUNT_2=1, FORECAST_COUNT_3=1, FORECAST_COUNT_4=1, FORECAST_COUNT_5=1):
+def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_profit_expectation , FORECAST_COUNT_2=1, FORECAST_COUNT_3=1, FORECAST_COUNT_4=1, FORECAST_COUNT_5=1, loss_penalty=0.65):
     """
     Calculates the efficiency of the trading strategy and a KPI based on selected Forecast Counts.
     KPI = Sum of Trade Results
@@ -478,7 +478,7 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
     
     for index, row in filtered_df.iterrows(): 
         if not row['Has_Fractal_Nearby']:
-            total_trade_result -= 0.6 # BEFORE IT WAS -1
+            total_trade_result -= loss_penalty  # FOR EURUSD 0.8        BEFORE IT WAS -0.65 # BEFORE IT WAS -1
             filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             continue
             
@@ -521,10 +521,10 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
                 total_trade_result += take_profit_expectation
                 filtered_df.at[index, 'Trade_Outcome'] = True # Win
             elif ratio >= 1:
-                total_trade_result += 0
+                total_trade_result += 0.48 # BEFORE IT WAS 0
                 filtered_df.at[index, 'Trade_Outcome'] = 0 # Neutral
             else:
-                total_trade_result -= 1 # BEFORE IT WAS -1
+                total_trade_result -= 0.75 # BEFORE IT WAS -1
                 filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             
         elif fractal_type == 'High': # Sell
@@ -547,10 +547,10 @@ def calculate_strategy_kpi(enter_points_df, df_with_discovery_fractals, take_pro
                 total_trade_result += take_profit_expectation
                 filtered_df.at[index, 'Trade_Outcome'] = True # Win
             elif ratio >= 1:
-                total_trade_result += 0
+                total_trade_result += 0.48 # BEFORE IT WAS 0
                 filtered_df.at[index, 'Trade_Outcome'] = 0 # Neutral
             else:
-                total_trade_result -= 1 # BEFORE IT WAS -1
+                total_trade_result -= 0.75 # BEFORE IT WAS -1
                 filtered_df.at[index, 'Trade_Outcome'] = False # Loss
             
     return total_trade_result, filtered_df
@@ -797,6 +797,7 @@ def evaluate_individual_task(ind):
         p_fc3 = int(ind['FORECAST_COUNT_3'])
         p_fc4 = int(ind['FORECAST_COUNT_4'])
         p_fc5 = int(ind['FORECAST_COUNT_5'])
+        p_loss_penalty = ind.get('LOSS_PENALTY', 0.65)
 
         # Execution Logic
         df_disc = find_fractals(worker_df_base.copy(), n=p_fractal_disc)
@@ -819,7 +820,6 @@ def evaluate_individual_task(ind):
                                                                  val_indices, 
                                                                  good_cycles, 
                                                                  tolerance_window=p_grid_val_tolerance)
-                enter_points_df, _ = perform_advanced_validation(results, val_indices, good_cycles, tolerance_window=p_grid_val_tolerance)
                 if not enter_points_df.empty:
                     # calculate_strategy_kpi returns (KPI, df)
                     kpi_val, _ = calculate_strategy_kpi(enter_points_df, 
@@ -828,8 +828,8 @@ def evaluate_individual_task(ind):
                                                         FORECAST_COUNT_2=p_fc2, 
                                                         FORECAST_COUNT_3=p_fc3, 
                                                         FORECAST_COUNT_4=p_fc4, 
-                                                        FORECAST_COUNT_5=p_fc5)
-                    kpi_val, _ = calculate_strategy_kpi(enter_points_df, df_val, take_profit_expectation=p_tp, FORECAST_COUNT_2=p_fc2, FORECAST_COUNT_3=p_fc3, FORECAST_COUNT_4=p_fc4, FORECAST_COUNT_5=p_fc5)
+                                                        FORECAST_COUNT_5=p_fc5,
+                                                        loss_penalty=p_loss_penalty)
                     kpi_value = kpi_val
         
         ind['KPI'] = kpi_value
@@ -844,8 +844,8 @@ def evaluate_individual_task(ind):
 
 
 
-# --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) ---
-def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False):
+# --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) --- 
+def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False, loss_penalty=0.65):
     print(f"\n--- Main Execution Started ---")
     print(f"Target Currency Pair: {target_currency_pair}")
     print(f"Execution Mode: {execution_mode}")
@@ -881,7 +881,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     
     # --- File for FULL or VISUALIZE_ONLY modes --- 
     
-    data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2024.01.19_2026.01.25.csv" # 2024
+    data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2023.01.01_2024.12.31.csv" # 2023 2024
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2022.10.07_2025.11.02.csv" # 3 y
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2024.10.26_2025.10.26.csv" # 2025
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2025.10.26_2025.11.02.csv" # 1 W
@@ -978,8 +978,9 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                                                               take_profit_expectation=TAKE_PROFIT_EXPECTATION, 
                                                                               FORECAST_COUNT_2=FORECAST_COUNT_2, 
                                                                               FORECAST_COUNT_3=FORECAST_COUNT_3, 
-                                                                              FORECAST_COUNT_4=FORECAST_COUNT_4, 
-                                                                              FORECAST_COUNT_5=FORECAST_COUNT_5)
+                                                                              FORECAST_COUNT_4=FORECAST_COUNT_4,  
+                                                                              FORECAST_COUNT_5=FORECAST_COUNT_5,
+                                                                              loss_penalty=loss_penalty)
                         print(f"\nStrategy KPI (Current Run): {KPI}")
 
                         # --- NEW: Extract and Save Patterns for Classification ---
@@ -1006,6 +1007,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                     candle_weights = np.full(lookback, 0.2)
                                     if lookback >= 4: candle_weights[-4:] = 1.0
                                     if lookback >= 7: candle_weights[-7:-4] = 0.5
+                                    candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
                                     feature_weights = np.repeat(candle_weights, 4)
                                     X_weighted = X * feature_weights
 
@@ -1173,7 +1175,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                         )
                         print(enter_points_recent_df[enter_points_recent_df['Forecast_Count'] >= 3]) 
 
-    # --- Mode 4: Optimum Search ---
+    # --- Mode 4: Optimum Search ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
     elif EXECUTION_MODE == 'OPTIMUM_SEARCH':
         print("\n--- Running in OPTIMUM SEARCH Mode ---")
         
@@ -1185,7 +1187,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         
         # --- Genetic Algorithm Settings ---
         POPULATION_SIZE = 90 # 40
-        GENERATIONS = 20
+        GENERATIONS = 22
         MUTATION_RATE = 0.4  # Increased slightly
         ELITISM_COUNT = 3    # Reduced to prevent premature convergence
 
@@ -1199,12 +1201,12 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                 
                 'TAKE_PROFIT_EXPECTATION': round(random.uniform(1.5, 3.2), 2),
 
-                'QUANTILE_THRESHOLD_3': round(random.uniform(0.45, 0.9), 2),
-                'QUANTILE_THRESHOLD_4': round(random.uniform(0.45, 0.9), 2),
-                'QUANTILE_THRESHOLD_5': round(random.uniform(0.45, 0.9), 2), 
-
-                #'FORECAST_COUNT_2': random.choice([0, 1]),
-                'FORECAST_COUNT_2': 1,
+                'QUANTILE_THRESHOLD_3': round(random.uniform(0.45, 0.95), 2),
+                'QUANTILE_THRESHOLD_4': round(random.uniform(0.45, 0.95), 2),
+                'QUANTILE_THRESHOLD_5': round(random.uniform(0.45, 0.95), 2), 
+ 
+                #'FORECAST_COUNT_2': 1,
+                'FORECAST_COUNT_2': random.choice([0, 1]),
                 'FORECAST_COUNT_3': 1,
                 'FORECAST_COUNT_4': random.choice([0, 1]),
                 'FORECAST_COUNT_5': random.choice([0, 1]),
@@ -1220,10 +1222,12 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             if random.random() < 0.4:
                 delta = random.uniform(-0.06, 0.06) * step_scale
                 ind['GRID_MATCH_TOLERANCE'] = round(max(0.1, min(0.7, ind['GRID_MATCH_TOLERANCE'] + delta)), 2)
+            
             # Mutate Validation Tolerance (Commented out to keep constant)
             # if random.random() < 0.4:
             #     delta = random.uniform(-0.06, 0.06) * step_scale
             #     ind['GRID_VALIDATION_TOLERANCE'] = round(max(0.1, min(1.0, ind['GRID_VALIDATION_TOLERANCE'] + delta)), 2)
+            
             # Mutate Fractal Discovery
             if random.random() < 0.2:
                 ind['FRACTAL_LEVEL_DISCOVERY'] = max(3, min(4, ind['FRACTAL_LEVEL_DISCOVERY'] + random.choice([-1, 1])))
@@ -1235,9 +1239,10 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                 if random.random() < 0.3:
                     delta = random.uniform(-0.06, 0.06) * step_scale
                     ind[q] = round(max(0.4, min(0.95, ind[q] + delta)), 2)
+           
             # Mutate Forecast Counts
-            #for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
-            for fc in [ 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            #for fc in [ 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
                 if random.random() < 0.15:
                     ind[fc] = 1 - ind[fc]
             return ind
@@ -1297,6 +1302,9 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             
             # Identify individuals that need evaluation
             individuals_to_eval = [ind for ind in population if ind['KPI'] == -float('inf')]
+            
+            for ind in individuals_to_eval:
+                ind['LOSS_PENALTY'] = loss_penalty
             
             if individuals_to_eval:
                 # Run in parallel
@@ -1504,6 +1512,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
             candle_weights[-4:] = 1.0 # Last 4 candles High importance
         if lookback >= 7:
             candle_weights[-7:-4] = 0.5 # Previous 3 candles Average importance
+        candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
             
         print(f"Candle Weights: {candle_weights}")
         feature_weights = np.repeat(candle_weights, 4) # Expand to OHLC
@@ -1524,7 +1533,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         for c in range(n_clusters):
             mask = combined_df['Cluster'] == c
             total = mask.sum()
-            wins = (combined_df[mask]['Trade_Outcome'].astype(str) == 'True').sum()
+            wins = combined_df[mask]['Trade_Outcome'].astype(str).isin(['True', '0']).sum()
             win_rate = (wins / total * 100) if total > 0 else 0
             cluster_stats.append({'Cluster_ID': c, 'Count': total, 'Win_Rate': win_rate, 'Wins': wins})
             
@@ -1584,8 +1593,22 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     print(f"\nAnalysis completed on: {timestamp_str}")
 
 if __name__ == '__main__':
-    main(target_currency_pair="USDJPY", 
-         execution_mode="OPTIMUM_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
-         n_clusters=124,
-         filter_by_cluster=False
-         )
+    loss_penalties = {
+        "EURUSD": 0.75,
+        "EURGBP": 0.65,
+        "GBPUSD": 0.65,
+        "USDJPY": 0.62,
+        "USDCHF": 0.65,
+        "NZDUSD": 0.65,
+        "AUDUSD": 0.65,
+        "USDCAD": 0.75
+    }
+    target_pairs = [ "AUDUSD"  ] # "EURUSD", "EURGBP", "GBPUSD", "USDJPY", "USDCHF", "NZDUSD", "AUDUSD", "USDCAD"
+    for pair in target_pairs:
+        l_penalty = loss_penalties.get(pair, 0.65)
+        main(target_currency_pair=pair, 
+             execution_mode="OPTIMUM_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
+             n_clusters=60, 
+             filter_by_cluster=False, 
+             loss_penalty=l_penalty
+             )

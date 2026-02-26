@@ -1,7 +1,8 @@
 
 
+#print(f"Current Python Executable: {sys.executable}")
 
-
+from tslearn.clustering import TimeSeriesKMeans
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -778,12 +779,13 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 
 
 # --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) ---
-def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False):
+def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False, min_cluster_win_rate=10):
     print(f"\n--- Main Execution Started ---")
     print(f"Target Currency Pair: {target_currency_pair}")
     print(f"Execution Mode: {execution_mode}")
     print(f"Number of Clusters: {n_clusters}")
     print(f"Filter by Cluster: {filter_by_cluster}")
+    print(f"Min Cluster Win Rate: >{min_cluster_win_rate}%")
     # --- Configuration ---
     CYCLES_DATABASE_FILE = "good_cycles_database.json"
     TARGET_CURRENCY_PAIR = target_currency_pair
@@ -814,14 +816,14 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     
     # --- File for FULL or VISUALIZE_ONLY modes --- 
     
-    data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2024.01.19_2026.01.25.csv" # 2024
+    data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2023.01.01_2024.12.31.csv" # 2024
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2022.10.07_2025.11.02.csv" # 3 y
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2024.10.26_2025.10.26.csv" # 2025
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2025.10.26_2025.11.02.csv" # 1 W
 
     currency_pair = TARGET_CURRENCY_PAIR
     
-    # --- Mode 1: Full Analysis ---
+    # --- Mode 1: Full Analysis -----------------------------------------------------------------------------------------------
     if EXECUTION_MODE == 'FULL':
         print("\n--- Running in FULL Analysis Mode ---")
         
@@ -941,21 +943,25 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                 if not patterns_df.empty:
                                     kmeans_model = joblib.load("kmeans_model.pkl")
                                     stats_df = pd.read_csv("Optimum_Pattern_Results.csv")
-                                    good_clusters = stats_df[stats_df['Win_Rate'] >= 10]['Cluster_ID'].values
-                                    print(f"Loaded model. Found {len(good_clusters)} good clusters (WR >= 10%).")
+                                    good_clusters = stats_df[stats_df['Win_Rate'] > min_cluster_win_rate]['Cluster_ID'].values
+                                    print(f"Loaded model. Found {len(good_clusters)} good clusters (WR > {min_cluster_win_rate}%).")
 
                                     # Prepare Data (Must match training weighting)
                                     X = np.array(patterns_df['Pattern_Vector'].tolist())
                                     n_features = X.shape[1]
                                     lookback = n_features // 4
-                                    candle_weights = np.full(lookback, 0.2)
-                                    if lookback >= 4: candle_weights[-4:] = 1.0
-                                    if lookback >= 7: candle_weights[-7:-4] = 0.5
+                                    candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
                                     feature_weights = np.repeat(candle_weights, 4)
                                     X_weighted = X * feature_weights
 
                                     # Predict and Filter
-                                    predicted_clusters = kmeans_model.predict(X_weighted)
+                                    # Handle tslearn (DTW) models which expect 3D input
+                                    if hasattr(kmeans_model, 'cluster_centers_') and kmeans_model.cluster_centers_.ndim == 3:
+                                        X_for_pred = X_weighted.reshape(X_weighted.shape[0], lookback, 4)
+                                    else:
+                                        X_for_pred = X_weighted
+                                        
+                                    predicted_clusters = kmeans_model.predict(X_for_pred)
                                     patterns_df['Cluster'] = predicted_clusters
                                     patterns_df['Is_Good'] = patterns_df['Cluster'].isin(good_clusters)
                                     
@@ -966,7 +972,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                     enter_points_df = enter_points_df.loc[enter_points_df.index.isin(good_indices)].copy()
                                     
                                     print(f"Filtered Enter Points: {before_count} -> {len(updated_enter_points_df)} (Removed {before_count - len(updated_enter_points_df)} bad candidates)")
-                                    applied_filters_names.append("Cluster Filter (WR>=10%)")
+                                    applied_filters_names.append(f"Cluster Filter (WR>{min_cluster_win_rate}%)")
                             except Exception as e:
                                 print(f"Error applying cluster filter: {e}")
                                 print("Ensure 'kmeans_model.pkl' and 'Optimum_Pattern_Results.csv' exist (Run PATTERN_SEARCH first).")
@@ -1138,8 +1144,8 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                 'QUANTILE_THRESHOLD_4': round(random.uniform(0.55, 0.85), 2),
                 'QUANTILE_THRESHOLD_5': round(random.uniform(0.5, 0.8), 2),
 
-                #'FORECAST_COUNT_2': random.choice([0, 1]),
-                'FORECAST_COUNT_2': 1,
+                'FORECAST_COUNT_2': random.choice([0, 1]),
+                #'FORECAST_COUNT_2': 1,
 
                 'FORECAST_COUNT_3': 1,
                 'FORECAST_COUNT_4': random.choice([0, 1]),
@@ -1173,8 +1179,8 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                     ind[q] = round(max(0.4, min(0.95, ind[q] + delta)), 2)
             # Mutate Forecast Counts
             
-            # for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
-            for fc in ['FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            for fc in ['FORECAST_COUNT_2', 'FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
+            #for fc in ['FORECAST_COUNT_4', 'FORECAST_COUNT_5']:
                 if random.random() < 0.15:
                     ind[fc] = 1 - ind[fc]
             return ind
@@ -1354,6 +1360,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         print("\n--- Running in PATTERN SEARCH Mode ---")
         try:
             from sklearn.cluster import KMeans
+            import sklearn
         except ImportError:
             print("Error: scikit-learn is required for PATTERN_SEARCH. Please install it: pip install scikit-learn")
             return
@@ -1407,11 +1414,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         lookback = n_features // 4
         print(f"Detected lookback: {lookback} candles.")
         
-        candle_weights = np.full(lookback, 0.2) # Default Low importance
-        if lookback >= 4:
-            candle_weights[-4:] = 1.0 # Last 4 candles High importance
-        if lookback >= 7:
-            candle_weights[-7:-4] = 0.5 # Previous 3 candles Average importance
+        candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
             
         print(f"Candle Weights: {candle_weights}")
         feature_weights = np.repeat(candle_weights, 4) # Expand to OHLC
@@ -1419,9 +1422,23 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         print(f"Applied weighting scheme to clustering features.")
 
         # 3. Clustering for Pattern Identification
-        print(f"\n--- Performing K-Means Clustering (k={n_clusters}) to find Optimum Patterns ---")
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=25)
-        clusters = kmeans.fit_predict(X_weighted)
+        print(f"\n--- Performing Clustering (k={n_clusters}) to find Optimum Patterns ---")
+        
+        # Try using tslearn for shape-based clustering (DTW)
+        try:
+            from tslearn.clustering import TimeSeriesKMeans
+            print(">> Using tslearn TimeSeriesKMeans with Dynamic Time Warping (DTW).")
+            print("   (This allows matching shapes of different speeds/lengths)")
+            # Reshape to (n_samples, lookback, 4) for tslearn
+            X_train = X_weighted.reshape(X_weighted.shape[0], lookback, 4)
+            kmeans = TimeSeriesKMeans(n_clusters=n_clusters, metric="dtw", max_iter=10, random_state=42, n_init=1)
+            clusters = kmeans.fit_predict(X_train)
+        except ImportError:
+            print(">> tslearn not found. Using standard KMeans (Euclidean distance).")
+            print("   (To enable shape-invariant clustering, install: pip install tslearn)")
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=25)
+            clusters = kmeans.fit_predict(X_weighted)
+            
         combined_df['Cluster'] = clusters
         
         joblib.dump(kmeans, "kmeans_model.pkl")
@@ -1432,7 +1449,8 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         for c in range(n_clusters):
             mask = combined_df['Cluster'] == c
             total = mask.sum()
-            wins = (combined_df[mask]['Trade_Outcome'].astype(str) == 'True').sum()
+            #wins = (combined_df[mask]['Trade_Outcome'].astype(str) == 'True').sum()
+            wins = combined_df[mask]['Trade_Outcome'].astype(str).isin(['True', '0']).sum()
             win_rate = (wins / total * 100) if total > 0 else 0
             cluster_stats.append({'Cluster_ID': c, 'Count': total, 'Win_Rate': win_rate, 'Wins': wins})
             
@@ -1457,6 +1475,9 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         for i, (idx, row) in enumerate(stats_df.head(n_clusters).iterrows()):
             cluster_id = int(row['Cluster_ID'])
             centroid = kmeans.cluster_centers_[cluster_id]
+            
+            # Flatten if coming from tslearn (lookback, 4) to match logic below
+            if centroid.ndim == 2: centroid = centroid.flatten()
             
             # Un-weight centroid for visualization to show true shape
             original_centroid = centroid / feature_weights
@@ -1492,9 +1513,12 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     print(f"\nAnalysis completed on: {timestamp_str}")
 
 if __name__ == '__main__':
-    main(target_currency_pair="USDJPY", 
-         execution_mode="FULL",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
-         n_clusters=124,
-         filter_by_cluster=False 
-         )
+    target_pairs = [ "EURUSD"  ] # "EURUSD", "EURGBP", "GBPUSD", "USDJPY", "USDCHF", "NZDUSD", "AUDUSD", "USDCAD"
+    for pair in target_pairs:
+        main(target_currency_pair=pair, 
+             execution_mode="PATTERN_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
+             n_clusters=120, 
+             filter_by_cluster=False,
+             min_cluster_win_rate=23.4
+             )
     
