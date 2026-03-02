@@ -1596,7 +1596,7 @@ if __name__ == '__main__':
     loss_penalties = {
         "EURUSD": 0.75,
         "EURGBP": 0.65,
-        "GBPUSD": 0.65,
+        "GBPUSD": 0.7,
         "USDJPY": 0.62,
         "USDCHF": 0.65,
         "NZDUSD": 0.65,

@@ -1,6 +1,7 @@
 {
     "EURGBP": {
         "good_cycles": [
+            34,
             55,
             89
         ],
@@ -23,28 +24,27 @@
         "last_updated": "2026-02-23 13:58:46"
     },
     "GBPUSD": {
-        "good_cycles": [
-            34,
+        "good_cycles": [ 
             55,
             89
         ],
-        "discovery_fractal_level": 3,
+        "discovery_fractal_level": 4,
         "validation_fractal_level": 2,
-        "grid_match_tolerance": 0.04,
+        "grid_match_tolerance": 0.02,
         "grid_validation_tolerance": 0.65,
-        "take_profit_expectation": 3.03,
+        "take_profit_expectation": 3.06,
         "min_forecast_count_chart": 3,
-        "quantile_threshold_3": 0.91,
-        "quantile_threshold_4": 0.61,
-        "quantile_threshold_5": 0.52,
-        "forecast_count_2": 0,
+        "quantile_threshold_3": 0.88,
+        "quantile_threshold_4": 0.79,
+        "quantile_threshold_5": 0.89,
+        "forecast_count_2": 1,
         "forecast_count_3": 1,
-        "forecast_count_4": 1,
+        "forecast_count_4": 0,
         "forecast_count_5": 1,
         "filter_unique_lengths_applied": false,
         "filter_no_fib_ratio_applied": false,
-        "kpi_value": 30.39000000000002,
-        "last_updated": "2026-02-23 18:30:38"
+        "kpi_value": 60.35999999999996,
+        "last_updated": "2026-02-23 13:58:46"
     },
     "USDCHF": {
         "good_cycles": [

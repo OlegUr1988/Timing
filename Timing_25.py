@@ -2,7 +2,6 @@
 
 #print(f"Current Python Executable: {sys.executable}")
 
-from tslearn.clustering import TimeSeriesKMeans
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -779,7 +778,7 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
 
 
 # --- Main Execution (MODIFIED FOR EXECUTION MODES AND NO exit()) ---
-def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False, min_cluster_win_rate=10):
+def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clusters=88, filter_by_cluster=False, min_cluster_win_rate=10, data_file_suffix="_Hourly_Bid_2023.01.01_2024.12.31.csv"):
     print(f"\n--- Main Execution Started ---")
     print(f"Target Currency Pair: {target_currency_pair}")
     print(f"Execution Mode: {execution_mode}")
@@ -816,7 +815,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     
     # --- File for FULL or VISUALIZE_ONLY modes --- 
     
-    data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2023.01.01_2024.12.31.csv" # 2024
+    data_file = f"{TARGET_CURRENCY_PAIR}{data_file_suffix}"
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2022.10.07_2025.11.02.csv" # 3 y
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2024.10.26_2025.10.26.csv" # 2025
     #data_file = f"{TARGET_CURRENCY_PAIR}_Hourly_Bid_2025.10.26_2025.11.02.csv" # 1 W
@@ -950,7 +949,10 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                     X = np.array(patterns_df['Pattern_Vector'].tolist())
                                     n_features = X.shape[1]
                                     lookback = n_features // 4
-                                    candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
+                                    #candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
+                                    candle_weights = np.full(lookback, 0.2)
+                                    if lookback >= 4: candle_weights[-4:] = 1.0
+                                    if lookback >= 7: candle_weights[-7:-4] = 0.5
                                     feature_weights = np.repeat(candle_weights, 4)
                                     X_weighted = X * feature_weights
 
@@ -1414,7 +1416,12 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
         lookback = n_features // 4
         print(f"Detected lookback: {lookback} candles.")
         
-        candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
+        #candle_weights = np.full(lookback, 1.0) # Uniform weights for DTW
+        candle_weights = np.full(lookback, 0.2) # Default Low importance
+        if lookback >= 4:
+            candle_weights[-4:] = 1.0 # Last 4 candles High importance
+        if lookback >= 7:
+            candle_weights[-7:-4] = 0.5 # Previous 3 candles Average importance
             
         print(f"Candle Weights: {candle_weights}")
         feature_weights = np.repeat(candle_weights, 4) # Expand to OHLC
@@ -1513,12 +1520,15 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     print(f"\nAnalysis completed on: {timestamp_str}")
 
 if __name__ == '__main__':
-    target_pairs = [ "EURUSD"  ] # "EURUSD", "EURGBP", "GBPUSD", "USDJPY", "USDCHF", "NZDUSD", "AUDUSD", "USDCAD"
+    target_pairs = [ "GBPUSD"  ] 
+    # "EURUSD", "EURGBP", "USDJPY", "NZDUSD", "AUDUSD",       "GBPUSD", "USDCHF", "USDCAD",
+    
     for pair in target_pairs:
         main(target_currency_pair=pair, 
-             execution_mode="PATTERN_SEARCH",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
+             execution_mode="FULL",# Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
              n_clusters=120, 
-             filter_by_cluster=False,
-             min_cluster_win_rate=23.4
+             filter_by_cluster=True,
+             min_cluster_win_rate=19,
+             data_file_suffix="_Hourly_Bid_2023.01.01_2024.12.31.csv"
              )
     
