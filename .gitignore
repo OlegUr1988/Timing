@@ -3,3 +3,4 @@
 *.json
 *.pkl
 __pycache__/
+!timing_25.py
