@@ -19,10 +19,9 @@ import ast
 import sys
 import joblib # Added for saving/loading the model
 import subprocess
+import time
 
-
-
-# --- Stage 0: Functions for Saving/Loading Settings  ---
+# --- Stage 0: Functions for Saving/Loading Settings ---
 def load_cycles_from_file(filename):
     """Loads the good cycle lengths database from a JSON file."""
     try:
@@ -801,15 +800,13 @@ def publish_to_github(files):
     try:
         subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError:
-        
-        print("Error:  Current directory is not a git repository. Please run 'git init' and set up your remote.")
+        print("Error: Current directory is not a git repository. Please run 'git init' and set up your remote.")
         return
 
     try:
-        
         for f in files:
             if os.path.exists(f):
-                subprocess.run(["git", "add", f], check=True)
+                subprocess.run(["git", "add", "-f", f], check=True)
         
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
         if status.stdout.strip():
@@ -1339,7 +1336,10 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                 fig.update_xaxes(rangeslider=dict(visible=False), row=row, col=col)
                 fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], row=row, col=col)
 
-            fig.update_layout(height=900, width=1800, title_text=f"Real-Time Forecast Grid (8 Pairs) - Last {config['lookback_days']} Days_{config['title_suffix']}", template='plotly_white', showlegend=False)
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            title_text = f"Real-Time Forecast Grid (8 Pairs) - Last {config['lookback_days']} Days_{config['title_suffix']} (Generated: {now_str})"
+            fig.update_layout(height=900, width=1800, title_text=title_text, template='plotly_white', showlegend=False)
+            
             fig.write_html(config['filename'])
             print(f"\nGrid chart saved to {config['filename']}")
             webbrowser.open('file://' + os.path.realpath(config['filename']))
@@ -1756,10 +1756,28 @@ if __name__ == '__main__':
     EXECUTION_MODE = "REAL_TIME" # Options: 'FULL', 'VISUALIZE_ONLY', 'REAL_TIME', 'OPTIMUM_SEARCH', 'PATTERN_SEARCH'
     
     if EXECUTION_MODE == "REAL_TIME":
-        # Run once for the grid
-        main(target_currency_pair="GRID", 
-             execution_mode="REAL_TIME",
-             n_clusters=120, filter_by_cluster=True, min_cluster_win_rate=19)
+        print("--- Starting Real-Time Scheduler ---")
+        print("Script will run immediately, then every hour at XX:05.")
+        
+        while True:
+            print(f"\n>>> Starting execution cycle at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} <<<")
+            try:
+                # Run once for the grid
+                main(target_currency_pair="GRID", 
+                     execution_mode="REAL_TIME",
+                     n_clusters=120, filter_by_cluster=True, min_cluster_win_rate=19)
+            except Exception as e:
+                print(f"!!! Error during execution cycle: {e}")
+            
+            # Calculate time until next XX:05
+            now = datetime.datetime.now()
+            next_run = now.replace(minute=5, second=0, microsecond=0)
+            if now >= next_run:
+                next_run += datetime.timedelta(hours=1)
+            
+            wait_seconds = (next_run - now).total_seconds()
+            print(f"\nCycle complete. Waiting {wait_seconds/60:.1f} minutes until next run at {next_run.strftime('%H:%M:%S')}...")
+            time.sleep(wait_seconds)
     else:
         target_pairs = [ "GBPUSD" ] 
         for pair in target_pairs:
