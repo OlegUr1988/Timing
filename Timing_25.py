@@ -18,6 +18,7 @@ import glob
 import ast
 import sys
 import joblib # Added for saving/loading the model
+import subprocess
 
 # --- Stage 0: Functions for Saving/Loading Settings ---
 def load_cycles_from_file(filename):
@@ -59,7 +60,7 @@ def load_real_data(file_path):
     except Exception as e:
         print(f"Error loading CSV data: {e}"); return None
 
-def fetch_recent_data(ticker, months=1.5):
+def fetch_recent_data(ticker, months=1.5, interval='1h'):
     """
     Fetches recent 1-hour data using yfinance, saves it to CSV,
     and returns a cleaned DataFrame for analysis.
@@ -72,7 +73,7 @@ def fetch_recent_data(ticker, months=1.5):
     
     try:
         yf_ticker = f"{ticker[:3]}{ticker[3:]}=X"
-        df = yf.download(yf_ticker, start=start_date, end=end_date, interval="1h")
+        df = yf.download(yf_ticker, start=start_date, end=end_date, interval="1h") # Always fetch 1h, resample if needed
 
         if df.empty:
             print(f"Error: No data returned from yfinance for {yf_ticker}."); return None
@@ -100,19 +101,28 @@ def fetch_recent_data(ticker, months=1.5):
         
         df.rename(columns=col_map_rename, inplace=True)
         
+        # Convert Timestamp to datetime and remove timezone
+        df['Timestamp'] = pd.to_datetime(df['Timestamp']).dt.tz_localize(None)
+
+        # Resample if interval is 4h
+        if interval == '4h':
+            df.set_index('Timestamp', inplace=True)
+            agg_dict = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
+            if 'Volume' in df.columns: agg_dict['Volume'] = 'sum'
+            df = df.resample('4h').agg(agg_dict).dropna().reset_index()
+
         analysis_cols = ['Timestamp', 'Open', 'High', 'Low', 'Close']
         csv_cols = ['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']
         
         df_to_save = df[[col for col in csv_cols if col in df.columns]].copy()
         df_to_save.rename(columns={'Timestamp': 'Time (EET)'}, inplace=True)
-        df_to_save['Time (EET)'] = pd.to_datetime(df_to_save['Time (EET)'])
+        # df_to_save['Time (EET)'] is already datetime
         
-        csv_filename = f"{ticker}_RealTime_{months}.csv"
+        csv_filename = f"{ticker}_RealTime_{interval}.csv"
         df_to_save.to_csv(csv_filename, index=False, date_format='%Y.%m.%d %H:%M:%S') 
         print(f"Successfully saved recent data to {csv_filename}")
 
-        df_return = df[analysis_cols].copy()
-        df_return['Timestamp'] = pd.to_datetime(df_return['Timestamp']).dt.tz_localize(None)
+        df_return = df[analysis_cols].copy() # Timestamp is already correct type
         
         for col in ['Open', 'High', 'Low', 'Close']:
             df_return[col] = pd.to_numeric(df_return[col], errors='coerce')
@@ -772,6 +782,42 @@ def plot_real_time_chart(df_recent, enter_points_recent_df, all_forecasts_recent
     chart_filename = f'{currency_pair}_real_time_forecast_chart.html'; fig.write_html(chart_filename); print(f"\nReal-time chart saved successfully as '{chart_filename}'"); webbrowser.open('file://' + os.path.realpath(chart_filename)); print(f"Opening '{chart_filename}' in your web browser...")
 
 
+def publish_to_github(files):
+    """
+    Commits and pushes specified files to the current git repository.
+    """
+    print("\n--- Publishing to GitHub ---")
+    
+    # Check if git is available
+    try:
+        subprocess.run(["git", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        print("Error: 'git' command not found. Please install Git.")
+        return
+
+    # Check if inside a git repo
+    try:
+        subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        print("Error: Current directory is not a git repository. Please run 'git init' and set up your remote.")
+        return
+
+    try:
+        
+        for f in files:
+            if os.path.exists(f):
+                subprocess.run(["git", "add", f], check=True)
+        
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        if status.stdout.strip():
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            subprocess.run(["git", "commit", "-m", f"Auto-update forecast charts: {timestamp}"], check=True)
+            subprocess.run(["git", "push"], check=True)
+            print("Successfully published to GitHub.")
+        else:
+            print("No changes to commit.")
+    except subprocess.CalledProcessError as e:
+        print(f"Git operation failed: {e}")
 
 
 
@@ -1068,205 +1114,236 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
     # --- Mode 3: Real-Time Forecast ---
     elif EXECUTION_MODE == 'REAL_TIME':
         print("\n--- Running in REAL-TIME Forecast Mode (Grid View: 8 Pairs) ---")
-        cycles_db = load_cycles_from_file(CYCLES_DATABASE_FILE)
         
-        grid_pairs = ["EURUSD", "EURGBP", "USDJPY", "NZDUSD", "AUDUSD", "GBPUSD", "USDCHF", "USDCAD"]
-        rows = 2
-        cols = 4
-        
-        fig = make_subplots(
-            rows=rows, cols=cols, 
-            subplot_titles=grid_pairs,
-            vertical_spacing=0.12, 
-            horizontal_spacing=0.02
-        )
+        # Define configurations for 1h and 4h runs
+        rt_configs = [
+            {
+                "interval": "1h",
+                "db_file": "good_cycles_database.json",
+                "months": 2,
+                "filename": "Real_Time_Forecast_Grid_1h.html",
+                "lookback_days": 3,
+                "title_suffix": "1h"
+            },
+            {
+                "interval": "4h",
+                "db_file": "good_cycles_database_h4.json",
+                "months": 5, # Need more history for 400 4h candles
+                "filename": "Real_Time_Forecast_Grid_4h.html",
+                "lookback_days": 12, # 3 days * 4 = 12 days to show similar visual history
+                "title_suffix": "4h"
+            }
+        ]
 
-        # Pre-load cluster model if needed (to avoid reloading 8 times)
-        kmeans_model = None
-        good_clusters = []
-        if filter_by_cluster:
-            try:
-                if os.path.exists("kmeans_model.pkl") and os.path.exists("Optimum_Pattern_Results.csv"):
-                    kmeans_model = joblib.load("kmeans_model.pkl")
-                    stats_df = pd.read_csv("Optimum_Pattern_Results.csv")
-                    good_clusters = stats_df[stats_df['Win_Rate'] > min_cluster_win_rate]['Cluster_ID'].values
-                    print(f"Loaded Cluster Model. Good clusters (WR > {min_cluster_win_rate}%): {len(good_clusters)}")
-                else:
-                    print("Cluster model files not found. Skipping cluster filtering.")
-                    filter_by_cluster = False
-            except Exception as e:
-                print(f"Error loading cluster model: {e}")
-                filter_by_cluster = False
-
-        for i, pair in enumerate(grid_pairs):
-            row = (i // cols) + 1
-            col = (i % cols) + 1
-            print(f"\nProcessing {pair} ({i+1}/{len(grid_pairs)})...")
-
-            if pair not in cycles_db: 
-                print(f"Error: No saved settings for {pair}. Run 'FULL' mode first.")
-                fig.add_annotation(text="No Settings", xref=f"x{i+1}", yref=f"y{i+1}", showarrow=False, row=row, col=col)
-                continue
-
-            settings = cycles_db[pair]
-            good_cycle_lengths = settings.get("good_cycles", [])
-            FRACTAL_LEVEL_DISCOVERY = settings.get("discovery_fractal_level", 3)
-            FRACTAL_LEVEL_VALIDATION = settings.get("validation_fractal_level", 3)
-            MIN_FORECAST_COUNT_FOR_CHART = settings.get("min_forecast_count_chart", 3)
-            APPLY_FILTER_UNIQUE_LENGTHS = settings.get("filter_unique_lengths_applied", False)
-            APPLY_FILTER_NO_FIB_RATIO = settings.get("filter_no_fib_ratio_applied", False)
-            GRID_MATCH_TOLERANCE = settings.get("grid_match_tolerance", 0.4)
-            GRID_VALIDATION_TOLERANCE = settings.get("grid_validation_tolerance", 0.65)
+        generated_files = []
+        for config in rt_configs:
+            print(f"\n>>> Processing {config['interval']} Grid <<<")
+            cycles_db = load_cycles_from_file(config['db_file'])
             
-            if not good_cycle_lengths: 
-                print(f"Loaded 'good_cycles' empty for {pair}.")
-                continue
-
-            df_recent = fetch_recent_data(pair, months=REAL_TIME_MONTHS)
-            if df_recent is None: 
-                print(f"Failed to fetch recent data for {pair}.")
-                continue
-
-            df_recent = df_recent.reset_index(drop=True)
-            df_recent_disc_fractals = find_fractals(df_recent.copy(), n=FRACTAL_LEVEL_DISCOVERY)
-            recent_disc_indices = df_recent_disc_fractals.index[df_recent_disc_fractals['Fractal'].notna()].tolist()
-            df_recent_val_fractals = find_validation_fractals(df_recent.copy(), n=FRACTAL_LEVEL_VALIDATION)
-            recent_val_indices = df_recent_val_fractals.index[df_recent_val_fractals['Fractal'].notna()].tolist()
+            grid_pairs = ["EURUSD", "EURGBP", "USDJPY", "NZDUSD", "AUDUSD", "GBPUSD", "USDCHF", "USDCAD"]
+            rows = 2
+            cols = 4
             
-            results_recent = analyze_fibonacci_cycles(df_recent_disc_fractals, recent_disc_indices, tolerance_window=GRID_MATCH_TOLERANCE)
-            
-            if results_recent.empty: 
-                print(f"Could not generate base results from recent data for {pair}.")
-                # Plot just price
-                fig.add_trace(go.Candlestick(x=df_recent['Timestamp'], open=df_recent['Open'], high=df_recent['High'], low=df_recent['Low'], close=df_recent['Close'], name=pair, showlegend=False), row=row, col=col)
-                continue
+            fig = make_subplots(
+                rows=rows, cols=cols, 
+                subplot_titles=grid_pairs,
+                vertical_spacing=0.12, 
+                horizontal_spacing=0.02
+            )
 
-            enter_points_recent_df, all_forecasts_recent_df = perform_advanced_validation(
-                results_recent, recent_val_indices, good_cycle_lengths, tolerance_window=GRID_VALIDATION_TOLERANCE)
-
-            # --- Filter by Forecast Count ---
-            fc_filter = []
-            if settings.get("forecast_count_2", 0): fc_filter.append(2)
-            if settings.get("forecast_count_3", 0): fc_filter.append(3)
-            if settings.get("forecast_count_4", 0): fc_filter.append(4)
-            if settings.get("forecast_count_5", 0): fc_filter.append(5)
-            
-            if fc_filter and not enter_points_recent_df.empty:
-                enter_points_recent_df = enter_points_recent_df[enter_points_recent_df['Forecast_Count'].isin(fc_filter)].copy()
-
-            # --- Structural Filters ---
-            if APPLY_FILTER_UNIQUE_LENGTHS and not enter_points_recent_df.empty:
-                indices = [idx for idx, r in enter_points_recent_df.iterrows() if all_forecasts_recent_df[all_forecasts_recent_df['Forecast_ID'].isin(r['Contributing_Forecast_IDs'])]['Base_Cycle_Length'].nunique() == len(r['Contributing_Forecast_IDs'])]
-                enter_points_recent_df = enter_points_recent_df.loc[indices]
-            
-            if APPLY_FILTER_NO_FIB_RATIO and not enter_points_recent_df.empty:
-                indices = [idx for idx, r in enter_points_recent_df.iterrows() if not check_fib_ratio_in_lengths(all_forecasts_recent_df[all_forecasts_recent_df['Forecast_ID'].isin(r['Contributing_Forecast_IDs'])]['Base_Cycle_Length'].tolist())]
-                enter_points_recent_df = enter_points_recent_df.loc[indices]
-
-            # --- Cluster Filtering (Real-Time) ---
-            if filter_by_cluster and not enter_points_recent_df.empty and kmeans_model is not None:
+            # Pre-load cluster model if needed (to avoid reloading 8 times)
+            kmeans_model = None
+            good_clusters = []
+            if filter_by_cluster:
                 try:
-                    patterns_df = extract_candle_patterns(enter_points_recent_df, df_recent_val_fractals, lookback=17)
-                    if not patterns_df.empty:
-                        X = np.array(patterns_df['Pattern_Vector'].tolist())
-                        n_features = X.shape[1]
-                        lookback = n_features // 4
-                        candle_weights = np.full(lookback, 0.2)
-                        if lookback >= 4: candle_weights[-4:] = 1.0
-                        if lookback >= 7: candle_weights[-7:-4] = 0.5
-                        feature_weights = np.repeat(candle_weights, 4)
-                        X_weighted = X * feature_weights
-
-                        if hasattr(kmeans_model, 'cluster_centers_') and kmeans_model.cluster_centers_.ndim == 3:
-                            X_for_pred = X_weighted.reshape(X_weighted.shape[0], lookback, 4)
-                        else:
-                            X_for_pred = X_weighted
-                            
-                        predicted_clusters = kmeans_model.predict(X_for_pred)
-                        patterns_df['Cluster'] = predicted_clusters
-                        patterns_df['Is_Good'] = patterns_df['Cluster'].isin(good_clusters)
-                        
-                        good_indices = patterns_df[patterns_df['Is_Good']]['Original_Index'].values
-                        before_count = len(enter_points_recent_df)
-                        enter_points_recent_df = enter_points_recent_df.loc[enter_points_recent_df.index.isin(good_indices)].copy()
-                        print(f"  Cluster Filter: {before_count} -> {len(enter_points_recent_df)}")
-                except Exception as e:
-                    print(f"  Error applying cluster filter: {e}")
-
-            # --- Plotting to Grid ---
-            # 1. Candlestick
-            fig.add_trace(go.Candlestick(x=df_recent['Timestamp'], open=df_recent['Open'], high=df_recent['High'], low=df_recent['Low'], close=df_recent['Close'], name=pair, showlegend=False), row=row, col=col)
-            
-            # 2. Enter Points
-            filtered_enter_points = enter_points_recent_df[enter_points_recent_df['Forecast_Count'] >= MIN_FORECAST_COUNT_FOR_CHART].copy()
-            
-            future_points_hours = []
-            now_time = pd.Timestamp.now().tz_localize(None)
-            timestamps_np = df_recent['Timestamp'].values
-            close_prices_np = df_recent['Close'].values
-            num_rows = len(df_recent)
-            latest_data_time_np = timestamps_np[-1]
-
-            for _, r in filtered_enter_points.iterrows():
-                loc = r['Enter_Point_Location']
-                
-                # Price Y
-                price_idx = int(round(loc))
-                if 0 <= price_idx < num_rows: price = close_prices_np[price_idx]
-                else: price = close_prices_np[-1]
-                
-                # Time X
-                if 0 <= loc < num_rows:
-                    floor = int(loc); ceil = floor + 1
-                    if ceil >= num_rows: precise_time = pd.Timestamp(timestamps_np[floor])
+                    if os.path.exists("kmeans_model.pkl") and os.path.exists("Optimum_Pattern_Results.csv"):
+                        kmeans_model = joblib.load("kmeans_model.pkl")
+                        stats_df = pd.read_csv("Optimum_Pattern_Results.csv")
+                        good_clusters = stats_df[stats_df['Win_Rate'] > min_cluster_win_rate]['Cluster_ID'].values
+                        print(f"Loaded Cluster Model. Good clusters (WR > {min_cluster_win_rate}%): {len(good_clusters)}")
                     else:
-                        t1 = pd.Timestamp(timestamps_np[floor]); t2 = pd.Timestamp(timestamps_np[ceil])
-                        precise_time = t1 + ((t2 - t1) * (loc - floor))
-                elif loc >= num_rows:
-                    last_time = pd.Timestamp(timestamps_np[-1])
-                    precise_time = last_time + datetime.timedelta(hours=(loc - (num_rows - 1)))
-                else: continue
+                        print("Cluster model files not found. Skipping cluster filtering.")
+                        # filter_by_cluster = False # Don't disable globally, just skip for this run if failed
+                except Exception as e:
+                    print(f"Error loading cluster model: {e}")
+
+            for i, pair in enumerate(grid_pairs):
+                row = (i // cols) + 1
+                col = (i % cols) + 1
+                print(f"\nProcessing {pair} ({i+1}/{len(grid_pairs)})...")
+
+                if pair not in cycles_db: 
+                    print(f"Error: No saved settings for {pair} in {config['db_file']}.")
+                    fig.add_annotation(text="No Settings", xref=f"x{i+1}", yref=f"y{i+1}", showarrow=False, row=row, col=col)
+                    continue
+
+                settings = cycles_db[pair]
+                good_cycle_lengths = settings.get("good_cycles", [])
+                FRACTAL_LEVEL_DISCOVERY = settings.get("discovery_fractal_level", 3)
+                FRACTAL_LEVEL_VALIDATION = settings.get("validation_fractal_level", 3)
+                MIN_FORECAST_COUNT_FOR_CHART = settings.get("min_forecast_count_chart", 3)
+                APPLY_FILTER_UNIQUE_LENGTHS = settings.get("filter_unique_lengths_applied", False)
+                APPLY_FILTER_NO_FIB_RATIO = settings.get("filter_no_fib_ratio_applied", False)
+                GRID_MATCH_TOLERANCE = settings.get("grid_match_tolerance", 0.4)
+                GRID_VALIDATION_TOLERANCE = settings.get("grid_validation_tolerance", 0.65)
                 
-                if precise_time > pd.Timestamp(latest_data_time_np):
-                    # Future
-                    fig.add_vline(x=precise_time, line_width=1.5, line_dash="dot", line_color="blue", row=row, col=col)
-                    hours_diff = (precise_time - now_time).total_seconds() / 3600
-                    if hours_diff > 0: future_points_hours.append(hours_diff)
+                if not good_cycle_lengths: 
+                    print(f"Loaded 'good_cycles' empty for {pair}.")
+                    continue
+
+                df_recent = fetch_recent_data(pair, months=config['months'], interval=config['interval'])
+                if df_recent is None: 
+                    print(f"Failed to fetch recent data for {pair}.")
+                    continue
+
+                df_recent = df_recent.reset_index(drop=True)
+                df_recent_disc_fractals = find_fractals(df_recent.copy(), n=FRACTAL_LEVEL_DISCOVERY)
+                recent_disc_indices = df_recent_disc_fractals.index[df_recent_disc_fractals['Fractal'].notna()].tolist()
+                df_recent_val_fractals = find_validation_fractals(df_recent.copy(), n=FRACTAL_LEVEL_VALIDATION)
+                recent_val_indices = df_recent_val_fractals.index[df_recent_val_fractals['Fractal'].notna()].tolist()
+                
+                results_recent = analyze_fibonacci_cycles(df_recent_disc_fractals, recent_disc_indices, tolerance_window=GRID_MATCH_TOLERANCE)
+                
+                if results_recent.empty: 
+                    print(f"Could not generate base results from recent data for {pair}.")
+                    # Plot just price
+                    fig.add_trace(go.Candlestick(x=df_recent['Timestamp'], open=df_recent['Open'], high=df_recent['High'], low=df_recent['Low'], close=df_recent['Close'], name=pair, showlegend=False), row=row, col=col)
+                    continue
+
+                enter_points_recent_df, all_forecasts_recent_df = perform_advanced_validation(
+                    results_recent, recent_val_indices, good_cycle_lengths, tolerance_window=GRID_VALIDATION_TOLERANCE)
+
+                # --- Filter by Forecast Count ---
+                fc_filter = []
+                if settings.get("forecast_count_2", 0): fc_filter.append(2)
+                if settings.get("forecast_count_3", 0): fc_filter.append(3)
+                if settings.get("forecast_count_4", 0): fc_filter.append(4)
+                if settings.get("forecast_count_5", 0): fc_filter.append(5)
+                
+                if fc_filter and not enter_points_recent_df.empty:
+                    enter_points_recent_df = enter_points_recent_df[enter_points_recent_df['Forecast_Count'].isin(fc_filter)].copy()
+
+                # --- Structural Filters ---
+                if APPLY_FILTER_UNIQUE_LENGTHS and not enter_points_recent_df.empty:
+                    indices = [idx for idx, r in enter_points_recent_df.iterrows() if all_forecasts_recent_df[all_forecasts_recent_df['Forecast_ID'].isin(r['Contributing_Forecast_IDs'])]['Base_Cycle_Length'].nunique() == len(r['Contributing_Forecast_IDs'])]
+                    enter_points_recent_df = enter_points_recent_df.loc[indices]
+                
+                if APPLY_FILTER_NO_FIB_RATIO and not enter_points_recent_df.empty:
+                    indices = [idx for idx, r in enter_points_recent_df.iterrows() if not check_fib_ratio_in_lengths(all_forecasts_recent_df[all_forecasts_recent_df['Forecast_ID'].isin(r['Contributing_Forecast_IDs'])]['Base_Cycle_Length'].tolist())]
+                    enter_points_recent_df = enter_points_recent_df.loc[indices]
+
+                # --- Cluster Filtering (Real-Time) ---
+                if filter_by_cluster and not enter_points_recent_df.empty and kmeans_model is not None:
+                    try:
+                        patterns_df = extract_candle_patterns(enter_points_recent_df, df_recent_val_fractals, lookback=17)
+                        if not patterns_df.empty:
+                            X = np.array(patterns_df['Pattern_Vector'].tolist())
+                            n_features = X.shape[1]
+                            lookback = n_features // 4
+                            candle_weights = np.full(lookback, 0.2)
+                            if lookback >= 4: candle_weights[-4:] = 1.0
+                            if lookback >= 7: candle_weights[-7:-4] = 0.5
+                            feature_weights = np.repeat(candle_weights, 4)
+                            X_weighted = X * feature_weights
+
+                            if hasattr(kmeans_model, 'cluster_centers_') and kmeans_model.cluster_centers_.ndim == 3:
+                                X_for_pred = X_weighted.reshape(X_weighted.shape[0], lookback, 4)
+                            else:
+                                X_for_pred = X_weighted
+                                
+                            predicted_clusters = kmeans_model.predict(X_for_pred)
+                            patterns_df['Cluster'] = predicted_clusters
+                            patterns_df['Is_Good'] = patterns_df['Cluster'].isin(good_clusters)
+                            
+                            good_indices = patterns_df[patterns_df['Is_Good']]['Original_Index'].values
+                            before_count = len(enter_points_recent_df)
+                            enter_points_recent_df = enter_points_recent_df.loc[enter_points_recent_df.index.isin(good_indices)].copy()
+                            print(f"  Cluster Filter: {before_count} -> {len(enter_points_recent_df)}")
+                    except Exception as e:
+                        print(f"  Error applying cluster filter: {e}")
+
+                # --- Plotting to Grid ---
+                # 1. Candlestick
+                fig.add_trace(go.Candlestick(x=df_recent['Timestamp'], open=df_recent['Open'], high=df_recent['High'], low=df_recent['Low'], close=df_recent['Close'], name=pair, showlegend=False), row=row, col=col)
+                
+                # 2. Enter Points
+                if enter_points_recent_df.empty:
+                    filtered_enter_points = pd.DataFrame()
                 else:
-                    # Past
-                    color = 'gold' if r['Has_Fractal_Nearby'] else 'red'
-                    symbol = 'star' if r['Has_Fractal_Nearby'] else 'x'
-                    fig.add_trace(go.Scatter(x=[precise_time], y=[price], mode='markers', marker=dict(size=8, symbol=symbol, color=color, line=dict(width=1, color='DarkSlateGrey')), showlegend=False, hoverinfo='text', text=f"FC:{r['Forecast_Count']}"), row=row, col=col)
-            
-            # 3. Annotation
-            future_points_hours.sort()
-            if future_points_hours:
-                next_3 = [f"{h:.1f}h" for h in future_points_hours[:3]]
-                annot = f"Next: {', '.join(next_3)}"
-                # Add text trace for annotation to avoid layout coordinate issues
-                fig.add_trace(go.Scatter(
-                    x=[df_recent['Timestamp'].iloc[0]], 
-                    y=[df_recent['High'].max()],
-                    mode="text",
-                    text=[annot],
-                    textposition="bottom right",
-                    showlegend=False
-                ), row=row, col=col)
+                    filtered_enter_points = enter_points_recent_df[enter_points_recent_df['Forecast_Count'] >= MIN_FORECAST_COUNT_FOR_CHART].copy()
+                
+                future_points_hours = []
+                now_time = pd.Timestamp.now().tz_localize(None)
+                timestamps_np = df_recent['Timestamp'].values
+                close_prices_np = df_recent['Close'].values
+                num_rows = len(df_recent)
+                latest_data_time_np = timestamps_np[-1]
 
-            # --- Set X-Axis Range to Last 3 Days ---
-            last_ts = df_recent['Timestamp'].iloc[-1]
-            start_range = last_ts - pd.Timedelta(days=3)
-            end_range = last_ts + pd.Timedelta(hours=48) # Show 2 days into future for forecast
-            
-            fig.update_xaxes(range=[start_range, end_range], row=row, col=col)
-            fig.update_xaxes(rangeslider=dict(visible=False), row=row, col=col)
-            fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], row=row, col=col)
+                for _, r in filtered_enter_points.iterrows():
+                    loc = r['Enter_Point_Location']
+                    
+                    # Price Y
+                    price_idx = int(round(loc))
+                    if 0 <= price_idx < num_rows: price = close_prices_np[price_idx]
+                    else: price = close_prices_np[-1]
+                    
+                    # Time X
+                    if 0 <= loc < num_rows:
+                        floor = int(loc); ceil = floor + 1
+                        if ceil >= num_rows: precise_time = pd.Timestamp(timestamps_np[floor])
+                        else:
+                            t1 = pd.Timestamp(timestamps_np[floor]); t2 = pd.Timestamp(timestamps_np[ceil])
+                            precise_time = t1 + ((t2 - t1) * (loc - floor))
+                    elif loc >= num_rows:
+                        last_time = pd.Timestamp(timestamps_np[-1])
+                        # Calculate time diff based on interval
+                        hours_per_candle = 4 if config['interval'] == '4h' else 1
+                        precise_time = last_time + datetime.timedelta(hours=(loc - (num_rows - 1)) * hours_per_candle)
+                    else: continue
+                    
+                    if precise_time > pd.Timestamp(latest_data_time_np):
+                        # Future
+                        fig.add_vline(x=precise_time, line_width=1.5, line_dash="dot", line_color="blue", row=row, col=col)
+                        hours_diff = (precise_time - now_time).total_seconds() / 3600
+                        if hours_diff > 0: future_points_hours.append(hours_diff)
+                    else:
+                        # Past
+                        color = 'gold' if r['Has_Fractal_Nearby'] else 'red'
+                        symbol = 'star' if r['Has_Fractal_Nearby'] else 'x'
+                        fig.add_trace(go.Scatter(x=[precise_time], y=[price], mode='markers', marker=dict(size=8, symbol=symbol, color=color, line=dict(width=1, color='DarkSlateGrey')), showlegend=False, hoverinfo='text', text=f"FC:{r['Forecast_Count']}"), row=row, col=col)
+                
+                # 3. Annotation
+                future_points_hours.sort()
+                if future_points_hours:
+                    next_3 = [f"{h:.1f}h" for h in future_points_hours[:3]]
+                    annot = f"Next: {', '.join(next_3)}"
+                    # Add text trace for annotation to avoid layout coordinate issues
+                    fig.add_trace(go.Scatter(
+                        x=[df_recent['Timestamp'].iloc[0]], 
+                        y=[df_recent['High'].max()],
+                        mode="text",
+                        text=[annot],
+                        textposition="bottom right",
+                        showlegend=False
+                    ), row=row, col=col)
 
-        fig.update_layout(height=900, width=1800, title_text="Real-Time Forecast Grid (8 Pairs) - Last 3 Days_1h", template='plotly_white', showlegend=False)
-        filename = "Real_Time_Forecast_Grid.html"
-        fig.write_html(filename)
-        print(f"\nGrid chart saved to {filename}")
-        webbrowser.open('file://' + os.path.realpath(filename))
+                # --- Set X-Axis Range ---
+                last_ts = df_recent['Timestamp'].iloc[-1]
+                start_range = last_ts - pd.Timedelta(days=config['lookback_days'])
+                end_range = last_ts + pd.Timedelta(hours=48 * (4 if config['interval'] == '4h' else 1)) 
+                
+                fig.update_xaxes(range=[start_range, end_range], row=row, col=col)
+                fig.update_xaxes(rangeslider=dict(visible=False), row=row, col=col)
+                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], row=row, col=col)
+
+            fig.update_layout(height=900, width=1800, title_text=f"Real-Time Forecast Grid (8 Pairs) - Last {config['lookback_days']} Days_{config['title_suffix']}", template='plotly_white', showlegend=False)
+            fig.write_html(config['filename'])
+            print(f"\nGrid chart saved to {config['filename']}")
+            webbrowser.open('file://' + os.path.realpath(config['filename']))
+            generated_files.append(config['filename'])
+
+        if generated_files:
+            publish_to_github(generated_files)
 
     # --- Mode 4: Optimum Search ---
     elif EXECUTION_MODE == 'OPTIMUM_SEARCH':

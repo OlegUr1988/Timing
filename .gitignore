@@ -1,2 +1,5 @@
 *.csv
-*.html
+*.py
+*.json
+*.pkl
+__pycache__/
