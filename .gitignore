@@ -2,5 +2,6 @@
 *.py
 *.json
 *.pkl
+*.zip
 __pycache__/
 !timing_25.py

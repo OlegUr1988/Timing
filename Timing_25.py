@@ -1113,7 +1113,7 @@ def main(target_currency_pair="AUDNZD", execution_mode="PATTERN_SEARCH", n_clust
                                                                FORECAST_COUNT_5=FORECAST_COUNT_5,
                                                                applied_filters_names=applied_filters_names)
                             print(df_for_price_chart[df_for_price_chart['Forecast_Count'] >= 3])
-                             
+                              
 
     # --- Mode 3: Real-Time Forecast ---
     elif EXECUTION_MODE == 'REAL_TIME':
